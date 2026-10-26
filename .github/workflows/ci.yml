@@ -1,0 +1,58 @@
+# Every pull request runs the six checks on native ARM64, the architecture the
+# image ships for. A failing step fails the run.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Every uv command asserts that uv.lock is current and never rewrites it.
+  UV_LOCKED: "1"
+
+jobs:
+  lint:
+    name: Lint, types and architecture
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Installs the uv version in pyproject.toml's required-version.
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: ruff check
+        run: uv run ruff check
+      - name: ruff format --check
+        run: uv run ruff format --check
+      - name: pyrefly check
+        run: uv run pyrefly check
+      - name: lint-imports
+        run: uv run lint-imports
+
+  test:
+    name: Image and tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Build the image
+        run: docker build --platform linux/arm64 -t tally-aloft-backend:ci .
+      - name: pytest
+        run: uv run pytest
+        env:
+          # The image tests use the image built above instead of building one.
+          BACKEND_TEST_IMAGE: tally-aloft-backend:ci
