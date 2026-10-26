@@ -69,3 +69,11 @@ def test_no_check_is_allowed_to_fail() -> None:
     assert "continue-on-error" not in workflow
     assert "|| true" not in workflow
     assert re.search(r"^\s+if:", workflow, re.MULTILINE) is None
+
+
+def test_every_install_is_locked() -> None:
+    commands = [match.group("command") for match in RUN.finditer(_workflow())]
+    syncs = [command for command in commands if command.startswith("uv sync")]
+
+    assert syncs != []
+    assert [sync for sync in syncs if "--locked" not in sync] == []

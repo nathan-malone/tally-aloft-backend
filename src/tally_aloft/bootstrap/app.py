@@ -35,12 +35,14 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
 
 def _middleware(settings: Settings) -> list[Middleware]:
     """
-    Return the app's middleware, outermost first.
+    Return the app's user middleware, outermost first.
 
     The proxy-headers wrapper comes first. It never responds, and it must set
-    the real client address before anything else reads it. Uvicorn's own proxy
-    handling is off (`--no-proxy-headers`), so the trusted networks come only
-    from settings.
+    the real client address before anything else reads it. Starlette always
+    wraps every user middleware in its own `ServerErrorMiddleware`, which
+    answers unhandled errors with a 500 but never reads the client address.
+    Uvicorn's own proxy handling is off (`--no-proxy-headers`), so the trusted
+    networks come only from settings.
     """
     return [
         Middleware(

@@ -9,8 +9,6 @@ import pytest
 from tests.support.containers import unique_name, wait_for_log
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     import docker
     from docker.models.containers import Container
     from docker.models.images import Image
@@ -27,7 +25,8 @@ def api(
     api_image: Image,
     probe_command: list[str],
     tests_mount: Mount,
-) -> Generator[Container]:
+    started_containers: list[Container],
+) -> Container:
     container = docker_client.containers.run(
         api_image,
         probe_command,
@@ -37,12 +36,10 @@ def api(
         mounts=[tests_mount],
         ports={"8000/tcp": ("127.0.0.1", 0)},  # Port 0: Docker picks a free one.
     )
-    try:
-        wait_for_log(container, "Application startup complete")
-        container.reload()
-        yield container
-    finally:
-        container.remove(force=True)
+    started_containers.append(container)
+    wait_for_log(container, "Application startup complete")
+    container.reload()
+    return container
 
 
 def _base_url(container: Container) -> str:

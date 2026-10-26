@@ -1,14 +1,14 @@
 import re
-import tomllib
 from pathlib import Path
 from typing import cast
 
-from tests.support.paths import PYPROJECT, ROOT
+from tests.support.paths import PYPROJECT, ROOT, pyproject
 
 # Built in two parts so this file's own pattern isn't read as a suppression.
 SUPPRESSION = "pyrefly" + ": ignore"
 WELL_FORMED = re.compile(re.escape(SUPPRESSION) + r"\[[a-z-]+(, [a-z-]+)*\]\s+#\s*\S")
 TURNED_OFF = re.compile(r'=\s*(false|"ignore"|"warn")')
+ERROR_TABLES = {"[tool.pyrefly.errors]", "[tool.pyrefly.sub-config.errors]"}
 MAX_SRC_SUPPRESSIONS = 10
 
 
@@ -22,9 +22,7 @@ def _suppressions(folder: str) -> list[str]:
 
 
 def test_uses_the_strict_preset_and_checks_unannotated_bodies() -> None:
-    pyrefly = cast(
-        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["pyrefly"]
-    )
+    pyrefly = cast("dict[str, dict[str, object]]", pyproject()["tool"])["pyrefly"]
 
     assert pyrefly["preset"] == "strict"
     assert pyrefly["check-unannotated-defs"] is True
@@ -35,7 +33,7 @@ def test_every_error_kind_left_off_has_a_reason() -> None:
     missing: list[str] = []
     for line in PYPROJECT.read_text().splitlines():
         if line.startswith("["):
-            in_errors = line == "[tool.pyrefly.errors]"
+            in_errors = line in ERROR_TABLES
         elif in_errors and TURNED_OFF.search(line) is not None and "#" not in line:
             missing.append(line.strip())
 

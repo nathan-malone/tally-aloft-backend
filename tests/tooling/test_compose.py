@@ -1,11 +1,11 @@
 import json
-import shutil
 import subprocess
 from typing import cast
 
 import pytest
 
 from tally_aloft.bootstrap.settings import Settings, variable_name
+from tests.support.containers import docker_cli
 from tests.support.paths import ROOT
 
 pytestmark = pytest.mark.container
@@ -14,11 +14,8 @@ pytestmark = pytest.mark.container
 @pytest.fixture(scope="module")
 def api_service() -> dict[str, object]:
     """Return the `api` service as Compose renders it under profile `app`."""
-    docker_cli = shutil.which("docker")
-    if docker_cli is None:
-        pytest.fail("the Compose tests need the docker CLI on PATH")
     result = subprocess.run(
-        [docker_cli, "compose", "--profile", "app", "config", "--format", "json"],
+        [docker_cli(), "compose", "--profile", "app", "config", "--format", "json"],
         cwd=ROOT,
         capture_output=True,
         text=True,

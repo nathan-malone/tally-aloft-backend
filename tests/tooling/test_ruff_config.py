@@ -1,19 +1,38 @@
-import re
 import subprocess
 import sys
-import tomllib
 from typing import cast
 
-from tests.support.paths import PYPROJECT, ROOT
+from tests.support.paths import PYPROJECT, ROOT, pyproject
 
-RULE_ENTRY = re.compile(r'^\s*"[A-Z]+[0-9]*",')
+
+def _ruff_config() -> dict[str, object]:
+    return cast("dict[str, dict[str, object]]", pyproject()["tool"])["ruff"]
 
 
 def _lint_config() -> dict[str, object]:
-    ruff = cast(
-        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["ruff"]
-    )
-    return cast("dict[str, object]", ruff["lint"])
+    return cast("dict[str, object]", _ruff_config()["lint"])
+
+
+def _ignored_rules() -> list[str]:
+    """Return every rule in the global and per-file ignore lists."""
+    lint = _lint_config()
+    per_file = cast("dict[str, list[str]]", lint.get("per-file-ignores", {}))
+    return [
+        *cast("list[str]", lint["ignore"]),
+        *(rule for rules in per_file.values() for rule in rules),
+    ]
+
+
+def _ruff_lint_lines() -> list[str]:
+    """Return the raw lines of every `[tool.ruff.lint…]` table."""
+    lines: list[str] = []
+    in_ruff_lint = False
+    for line in PYPROJECT.read_text().splitlines():
+        if line.startswith("["):
+            in_ruff_lint = line.startswith("[tool.ruff.lint")
+        elif in_ruff_lint:
+            lines.append(line)
+    return lines
 
 
 def _ruff_check(source: str, filename: str) -> subprocess.CompletedProcess[str]:
@@ -39,9 +58,7 @@ def _ruff_check(source: str, filename: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_selects_every_rule_without_preview() -> None:
-    ruff = cast(
-        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["ruff"]
-    )
+    ruff = _ruff_config()
     lint = _lint_config()
 
     assert lint["select"] == ["ALL"]
@@ -59,13 +76,12 @@ def test_global_ignores_are_few_and_follow_the_docstring_policy() -> None:
 
 
 def test_every_ignore_has_a_reason() -> None:
-    in_ruff_lint = False
-    missing: list[str] = []
-    for line in PYPROJECT.read_text().splitlines():
-        if line.startswith("["):
-            in_ruff_lint = line.startswith("[tool.ruff.lint")
-        elif in_ruff_lint and RULE_ENTRY.match(line) is not None and "#" not in line:
-            missing.append(line.strip())
+    lines = _ruff_lint_lines()
+    missing = [
+        rule
+        for rule in _ignored_rules()
+        if not any(f'"{rule}"' in line and "#" in line for line in lines)
+    ]
 
     assert missing == []
 

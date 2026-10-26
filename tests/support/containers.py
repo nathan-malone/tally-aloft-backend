@@ -1,6 +1,11 @@
+import shutil
 import time
 import uuid
 from typing import TYPE_CHECKING
+
+import pytest
+
+from tests.support.server import STARTUP_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from docker.models.containers import Container
@@ -8,9 +13,14 @@ if TYPE_CHECKING:
 # CI builds the image once and names it here; locally a fixture builds one.
 IMAGE_VARIABLE = "BACKEND_TEST_IMAGE"
 LOCAL_TAG = "tally-aloft-backend:test"
-API_APP = "tally_aloft.main:app"
-PROBE_APP = "tests.support.probe_app:app"
-READY_TIMEOUT_SECONDS = 60
+
+
+def docker_cli() -> str:
+    """Return the path of the docker CLI, or fail the test that needs it."""
+    path = shutil.which("docker")
+    if path is None:
+        pytest.fail("this test needs the docker CLI on PATH")
+    return path
 
 
 def unique_name(purpose: str) -> str:
@@ -20,7 +30,7 @@ def unique_name(purpose: str) -> str:
 
 def wait_for_log(container: Container, text: str) -> None:
     """Wait until `text` appears in the container's output."""
-    deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if text in container.logs().decode():
             return

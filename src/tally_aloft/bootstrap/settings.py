@@ -14,8 +14,14 @@ from pydantic_settings import (
     SettingsError,
 )
 
-# pydantic-settings names the field, never the value, in a parse error.
+_ENV_PREFIX = "TALLY_"
+# pydantic-settings 2.16 words a parse error as `error parsing value for field
+# "<name>" from source "<source>"`: it names the field, never the value. A test
+# raises a real one, so a change in that wording fails the suite.
 _PARSE_ERROR_FIELD = re.compile(r'field "(?P<field>\w+)"')
+
+
+_TRUSTS_EVERYONE = "would trust every address; list the proxies' networks"
 
 
 class Environment(StrEnum):
@@ -37,7 +43,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="TALLY_",
+        env_prefix=_ENV_PREFIX,
         extra="ignore",
         frozen=True,
     )
@@ -45,7 +51,7 @@ class Settings(BaseSettings):
     environment: Environment
     # The proxies, such as the load balancer, whose X-Forwarded-* headers are
     # trusted. Uvicorn silently ignores an entry it can't parse, so every entry
-    # is validated here, and `*` is rejected.
+    # is validated here, and `*` and catch-all networks are rejected.
     forwarded_allow_ips: Annotated[tuple[IPv4Network | IPv6Network, ...], NoDecode] = (
         IPv4Network("127.0.0.1/32"),
     )
@@ -67,10 +73,12 @@ class Settings(BaseSettings):
                 continue
             text = str(part).strip()
             if text == "*":
-                msg = "`*` would trust every address; list the proxies' networks"
-                raise ValueError(msg)
+                raise ValueError(_TRUSTS_EVERYONE)
             if text != "":
-                networks.append(ipaddress.ip_network(text))
+                network = ipaddress.ip_network(text)
+                if network.prefixlen == 0:
+                    raise ValueError(_TRUSTS_EVERYONE)
+                networks.append(network)
         return tuple(networks)
 
     @classmethod
@@ -98,7 +106,14 @@ class Settings(BaseSettings):
 
 
 class _ExplicitSettings(Settings):
-    """Settings built only from the values passed in, never the environment."""
+    """
+    Settings built only from the values passed in, never the environment.
+
+    An unknown value is an error here, so a misspelled field in a test fails
+    instead of silently keeping the default.
+    """
+
+    model_config = SettingsConfigDict(extra="forbid")
 
     @classmethod
     @override
@@ -129,24 +144,31 @@ def load_settings() -> Settings:
             for detail in error.errors()
         ]
     except SettingsError as error:
-        match = _PARSE_ERROR_FIELD.search(str(error))
-        field = match.group("field") if match is not None else ""
-        problems = [(_location_variable((field,)), "parse_error")]
+        problems = [(_location_variable((parse_error_field(error),)), "parse_error")]
     raise SystemExit(_describe(problems)) from None
 
 
 def variable_name(field: str) -> str:
-    """Return the environment variable that sets the `Settings` field `field`."""
-    alias = Settings.model_fields[field].validation_alias
-    name = alias if isinstance(alias, str) else field
-    return f"{Settings.model_config.get('env_prefix', '')}{name}".upper()
+    """
+    Return the environment variable that sets the `Settings` field `field`.
+
+    `Settings` fields have no aliases, which a test checks, so the variable is
+    always the prefix plus the field's name.
+    """
+    return f"{_ENV_PREFIX}{field.upper()}"
+
+
+def parse_error_field(error: SettingsError) -> str:
+    """Return the field a pydantic-settings parse error names, or `""`."""
+    match = _PARSE_ERROR_FIELD.search(str(error))
+    return "" if match is None else match.group("field")
 
 
 def _location_variable(location: tuple[int | str, ...]) -> str:
     """Return the environment variable for a validation error's location."""
     field = str(location[0]) if len(location) > 0 else ""
     if field not in Settings.model_fields:
-        return f"{Settings.model_config.get('env_prefix', '')}<unknown>".upper()
+        return f"{_ENV_PREFIX}<UNKNOWN>"
     return variable_name(field)
 
 

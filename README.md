@@ -4,7 +4,7 @@ The Tally Aloft backend: one async Python 3.14 codebase for the API, the backgro
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.11.14. It installs Python 3.14 itself.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), at exactly the version in `pyproject.toml`'s `required-version` (0.11.14 today). Any other version stops with an error. With the standalone installer, `uv self update 0.11.14` switches to it; otherwise install that version with your package manager. uv installs Python 3.14 itself.
 - [Docker](https://docs.docker.com/get-started/get-docker/) with Compose, running. The test suite and the container mode need it.
 
 Every command below works in PowerShell and in POSIX shells such as bash and zsh. Run them from the repository root.
@@ -52,4 +52,4 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | Variable | Format | Default | Required |
 | --- | --- | --- | --- |
 | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
-| `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` is rejected, and an empty value trusts none. | `127.0.0.1` | no |
+| `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |

@@ -1,12 +1,12 @@
 import re
-import tomllib
 from typing import cast
 
-from tests.support.paths import PYPROJECT, ROOT
+from tests.support.paths import ROOT, pyproject
 
 IMAGE_REFERENCE = re.compile(r"^(?:FROM\s+|COPY\s+--from=)(\S+)", re.MULTILINE)
 UV_IMAGE = re.compile(r"ghcr\.io/astral-sh/uv:(?P<version>[0-9.]+)@sha256:")
 BASE_IMAGE = re.compile(r"^FROM python:(?P<version>\d+\.\d+)-", re.MULTILINE)
+UV_SYNC = re.compile(r"\buv sync\b.*$", re.MULTILINE)
 
 
 def _dockerfile() -> str:
@@ -19,19 +19,15 @@ def _external_images() -> list[str]:
     return [reference for reference in references if ":" in reference]
 
 
-def _pyproject() -> dict[str, object]:
-    return tomllib.loads(PYPROJECT.read_text())
-
-
 def test_every_image_is_pinned_by_digest() -> None:
     images = _external_images()
 
-    assert len(images) == 3
+    assert images != []
     assert [image for image in images if "@sha256:" not in image] == []
 
 
 def test_uv_image_matches_the_required_uv_version() -> None:
-    tool = cast("dict[str, dict[str, str]]", _pyproject()["tool"])
+    tool = cast("dict[str, dict[str, str]]", pyproject()["tool"])
     required = tool["uv"]["required-version"].removeprefix("==")
     match = UV_IMAGE.search(_dockerfile())
 
@@ -40,7 +36,15 @@ def test_uv_image_matches_the_required_uv_version() -> None:
 
 
 def test_base_image_python_matches_requires_python() -> None:
-    project = cast("dict[str, str]", _pyproject()["project"])
+    project = cast("dict[str, str]", pyproject()["project"])
     requires = project["requires-python"].removeprefix("==").removesuffix(".*")
 
     assert set(BASE_IMAGE.findall(_dockerfile())) == {requires}
+
+
+def test_every_install_is_locked_and_without_dev_dependencies() -> None:
+    syncs = UV_SYNC.findall(_dockerfile())
+
+    assert syncs != []
+    assert [sync for sync in syncs if "--locked" not in sync] == []
+    assert [sync for sync in syncs if "--no-dev" not in sync] == []

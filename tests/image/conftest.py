@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -7,14 +6,9 @@ import docker
 import pytest
 from docker.types import IPAMConfig, IPAMPool, Mount
 
-from tests.support.containers import (
-    API_APP,
-    IMAGE_VARIABLE,
-    LOCAL_TAG,
-    PROBE_APP,
-    unique_name,
-)
+from tests.support.containers import IMAGE_VARIABLE, LOCAL_TAG, docker_cli, unique_name
 from tests.support.paths import ROOT
+from tests.support.server import API_APP, PROBE_APP
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -35,11 +29,8 @@ def docker_client() -> Generator[docker.DockerClient]:
 def api_image(docker_client: docker.DockerClient) -> Image:
     tag = os.environ.get(IMAGE_VARIABLE)
     if tag is None:
-        docker_cli = shutil.which("docker")
-        if docker_cli is None:
-            pytest.fail("the image tests need the docker CLI on PATH")
         subprocess.run(
-            [docker_cli, "build", "-t", LOCAL_TAG, "."], cwd=ROOT, check=True
+            [docker_cli(), "build", "-t", LOCAL_TAG, "."], cwd=ROOT, check=True
         )
         tag = LOCAL_TAG
     return docker_client.images.get(tag)

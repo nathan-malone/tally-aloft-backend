@@ -108,7 +108,7 @@ unsupported-dynamic-base = "error"
 untyped-class-decorator = "error"
 untyped-function-decorator = "error"
 untyped-namedtuple = "error"
-unused-call-result = false  # Discarding results such as Path.write_text()'s byte count is routine.
+unused-call-result = "error"
 unused-type-ignore = "error"
 # Warnings by default:
 attribute-assign-on-never = "error"
@@ -134,6 +134,13 @@ unresolvable-dunder-all = "error"
 untyped-import = "error"
 useless-overload-body = "error"
 variance-mismatch = "error"
+
+# Tests call for side effects whose results don't matter: `pytest.raises`
+# blocks, `Path.write_text()`, `subprocess.run(check=True)`, `Task.cancel()`.
+[[tool.pyrefly.sub-config]]
+matches = "tests/**"
+[tool.pyrefly.sub-config.errors]
+unused-call-result = false  # Side-effect calls are the test idiom.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
