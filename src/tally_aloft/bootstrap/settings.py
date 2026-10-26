@@ -125,23 +125,29 @@ def load_settings() -> Settings:
         return Settings()
     except ValidationError as error:
         problems = [
-            (_variable_name(detail["loc"]), detail["type"]) for detail in error.errors()
+            (_location_variable(detail["loc"]), detail["type"])
+            for detail in error.errors()
         ]
     except SettingsError as error:
         match = _PARSE_ERROR_FIELD.search(str(error))
         field = match.group("field") if match is not None else ""
-        problems = [(_variable_name((field,)), "parse_error")]
+        problems = [(_location_variable((field,)), "parse_error")]
     raise SystemExit(_describe(problems)) from None
 
 
-def _variable_name(location: tuple[int | str, ...]) -> str:
-    """Return the environment variable for an error's location."""
-    field = str(location[0]) if len(location) > 0 else ""
-    if field not in Settings.model_fields:
-        return f"{Settings.model_config.get('env_prefix', '')}<unknown>"
+def variable_name(field: str) -> str:
+    """Return the environment variable that sets the `Settings` field `field`."""
     alias = Settings.model_fields[field].validation_alias
     name = alias if isinstance(alias, str) else field
     return f"{Settings.model_config.get('env_prefix', '')}{name}".upper()
+
+
+def _location_variable(location: tuple[int | str, ...]) -> str:
+    """Return the environment variable for a validation error's location."""
+    field = str(location[0]) if len(location) > 0 else ""
+    if field not in Settings.model_fields:
+        return f"{Settings.model_config.get('env_prefix', '')}<unknown>".upper()
+    return variable_name(field)
 
 
 def _describe(problems: list[tuple[str, str]]) -> str:
