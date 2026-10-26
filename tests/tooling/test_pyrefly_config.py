@@ -3,7 +3,7 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
-from tests.tooling.paths import PYPROJECT, ROOT
+from tests.support.paths import PYPROJECT, ROOT
 
 # Built in two parts so this file's own pattern isn't read as a suppression.
 SUPPRESSION = "pyrefly" + ": ignore"

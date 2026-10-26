@@ -1,7 +1,7 @@
 import tomllib
 from typing import cast
 
-from tests.tooling.paths import ROOT
+from tests.support.paths import ROOT
 
 RUNTIME = {
     "alembic",

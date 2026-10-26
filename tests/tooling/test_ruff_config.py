@@ -4,7 +4,7 @@ import sys
 import tomllib
 from typing import cast
 
-from tests.tooling.paths import PYPROJECT, ROOT
+from tests.support.paths import PYPROJECT, ROOT
 
 RULE_ENTRY = re.compile(r'^\s*"[A-Z]+[0-9]*",')
 

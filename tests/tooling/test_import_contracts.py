@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.tooling.paths import PYPROJECT, ROOT
+from tests.support.paths import PYPROJECT, ROOT
 
 if TYPE_CHECKING:
     from pathlib import Path
