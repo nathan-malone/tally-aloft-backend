@@ -18,6 +18,8 @@ uv run lint-imports
 uv run pytest
 ```
 
+`pytest` needs Docker running. Tests marked `container` build the image (`tally-aloft-backend:test`), or use the one named by `BACKEND_TEST_IMAGE`, and run it. For a quick loop without Docker, run `uv run pytest -m "not container"`, but run the full suite before a commit.
+
 ## Conventions
 
 - Ruff runs every rule. Each ignore in `pyproject.toml` has a reason comment, and the global list stays at 10 or fewer.

@@ -1,0 +1,8 @@
+# The build context is an allowlist: only what the image build needs.
+# Everything else, including .env, tests/ and .git, never reaches the build.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+**/__pycache__
