@@ -1,0 +1,52 @@
+import re
+import tomllib
+from pathlib import Path
+from typing import cast
+
+from tests.tooling.paths import PYPROJECT, ROOT
+
+# Built in two parts so this file's own pattern isn't read as a suppression.
+SUPPRESSION = "pyrefly" + ": ignore"
+WELL_FORMED = re.compile(re.escape(SUPPRESSION) + r"\[[a-z-]+(, [a-z-]+)*\]\s+#\s*\S")
+TURNED_OFF = re.compile(r'=\s*(false|"ignore"|"warn")')
+MAX_SRC_SUPPRESSIONS = 10
+
+
+def _suppressions(folder: str) -> list[str]:
+    return [
+        f"{path.relative_to(ROOT)}: {line.strip()}"
+        for path in sorted((ROOT / folder).rglob("*.py"))
+        for line in Path(path).read_text().splitlines()
+        if SUPPRESSION in line
+    ]
+
+
+def test_uses_the_strict_preset_and_checks_unannotated_bodies() -> None:
+    pyrefly = cast(
+        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["pyrefly"]
+    )
+
+    assert pyrefly["preset"] == "strict"
+    assert pyrefly["check-unannotated-defs"] is True
+
+
+def test_every_error_kind_left_off_has_a_reason() -> None:
+    in_errors = False
+    missing: list[str] = []
+    for line in PYPROJECT.read_text().splitlines():
+        if line.startswith("["):
+            in_errors = line == "[tool.pyrefly.errors]"
+        elif in_errors and TURNED_OFF.search(line) is not None and "#" not in line:
+            missing.append(line.strip())
+
+    assert missing == []
+
+
+def test_every_suppression_names_its_kind_and_reason() -> None:
+    suppressions = _suppressions("src") + _suppressions("tests")
+
+    assert [s for s in suppressions if WELL_FORMED.search(s) is None] == []
+
+
+def test_src_has_few_suppressions() -> None:
+    assert len(_suppressions("src")) <= MAX_SRC_SUPPRESSIONS

@@ -1,0 +1,121 @@
+import re
+import subprocess
+import sys
+import tomllib
+from typing import cast
+
+from tests.tooling.paths import PYPROJECT, ROOT
+
+RULE_ENTRY = re.compile(r'^\s*"[A-Z]+[0-9]*",')
+
+
+def _lint_config() -> dict[str, object]:
+    ruff = cast(
+        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["ruff"]
+    )
+    return cast("dict[str, object]", ruff["lint"])
+
+
+def _ruff_check(source: str, filename: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--no-cache",
+            "--output-format",
+            "concise",
+            "--stdin-filename",
+            filename,
+            "-",
+        ],
+        input=source,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
+    )
+
+
+def test_selects_every_rule_without_preview() -> None:
+    ruff = cast(
+        "dict[str, object]", tomllib.loads(PYPROJECT.read_text())["tool"]["ruff"]
+    )
+    lint = _lint_config()
+
+    assert lint["select"] == ["ALL"]
+    assert ruff["line-length"] == 88
+    assert ruff.get("preview", False) is False
+    assert lint.get("preview", False) is False
+
+
+def test_global_ignores_are_few_and_follow_the_docstring_policy() -> None:
+    ignore = cast("list[str]", _lint_config()["ignore"])
+
+    assert len(ignore) <= 10
+    assert {"D100", "D104", "D203", "D212"} <= set(ignore)
+    assert {"D213", "D211"}.isdisjoint(ignore)
+
+
+def test_every_ignore_has_a_reason() -> None:
+    in_ruff_lint = False
+    missing: list[str] = []
+    for line in PYPROJECT.read_text().splitlines():
+        if line.startswith("["):
+            in_ruff_lint = line.startswith("[tool.ruff.lint")
+        elif in_ruff_lint and RULE_ENTRY.match(line) is not None and "#" not in line:
+            missing.append(line.strip())
+
+    assert missing == []
+
+
+def _source(*lines: str) -> str:
+    return "\n".join(lines) + "\n"
+
+
+UNDOCUMENTED = _source("def probe() -> int:", "    return 1")
+DOCUMENTED = _source(
+    "def probe() -> int:",
+    '    """',
+    "    Return one.",
+    "",
+    "    More.",
+    '    """',
+    "    return 1",
+)
+SUMMARY_ON_OPENING_LINE = _source(
+    "def probe() -> int:",
+    '    """Return one.',
+    "",
+    "    More.",
+    '    """',
+    "    return 1",
+)
+TEST_FUNCTION = _source("def test_probe() -> None:", "    assert len([1]) == 1")
+
+
+def test_public_function_in_src_needs_a_docstring() -> None:
+    result = _ruff_check(UNDOCUMENTED, "src/tally_aloft/probe.py")
+
+    assert result.returncode == 1
+    assert "D103" in result.stdout
+
+
+def test_documented_function_in_src_passes() -> None:
+    result = _ruff_check(DOCUMENTED, "src/tally_aloft/probe.py")
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_test_function_needs_no_docstring() -> None:
+    result = _ruff_check(TEST_FUNCTION, "tests/unit/test_probe.py")
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_multi_line_summary_on_the_opening_line_fails() -> None:
+    result = _ruff_check(SUMMARY_ON_OPENING_LINE, "src/tally_aloft/probe.py")
+
+    assert result.returncode == 1
+    assert "D213" in result.stdout

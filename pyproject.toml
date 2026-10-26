@@ -1,0 +1,215 @@
+[project]
+name = "tally-aloft"
+version = "0.1.0"
+description = "Tally Aloft backend: the API, background workers and scheduler."
+readme = "README.md"
+requires-python = "==3.14.*"
+dependencies = [
+    "alembic>=1.20.1",
+    "asyncpg>=0.32.0",
+    "fastapi>=0.162.0",
+    "logfire[asyncpg,fastapi,redis]>=5.3.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "redis>=8.1.0",
+    "sqlalchemy[asyncio]>=2.1.6",
+    "taskiq>=0.13.0",
+    "taskiq-redis>=1.2.4",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "import-linter>=2.15",
+    "polyfactory>=3.5.0",
+    "pyrefly>=1.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
+    "ruff>=0.17.2",
+    "testcontainers>=4.15.0",
+    "types-docker>=7.2.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = "==0.11.14"
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Conflicts with the formatter, which decides trailing commas.
+    "CPY001", # The project has no copyright header policy.
+    "D100",   # Public modules need no docstring (human rule).
+    "D104",   # Public packages need no docstring; a package's __init__ is a module.
+    "D203",   # Conflicts with D211, which wins: no blank line before a class docstring.
+    "D212",   # Conflicts with D213, which wins: the summary starts on the second line.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D",       # Tests need no docstrings (human rule).
+    "PLR2004", # Tests compare against literal expected values.
+    "S101",    # pytest checks with assert.
+    "S603",    # Tests run the project's tools as subprocesses with fixed arguments.
+]
+
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic evaluates these classes' annotations at runtime, so their imports
+# must stay outside TYPE_CHECKING blocks.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+]
+
+[tool.pyrefly]
+preset = "strict"
+check-unannotated-defs = true
+python-version = "3.14"
+project-includes = ["src", "tests"]
+search-path = [".", "src"]
+
+# Pyrefly 1.4's off-by-default error kinds that the strict preset leaves off
+# are all errors here, and so are the kinds that default to a warning, so the
+# check fails on them. A kind left off or lowered says why on its line.
+[tool.pyrefly.errors]
+# Off by default:
+empty-body = "error"
+explicit-any = "error"
+implicit-abstract-class = "error"
+implicit-bool = "error"
+implicit-reexport = "error"
+implicitly-defined-attribute = "error"
+incompatible-comparison = "error"
+invalid-abstract-method = "error"
+invalid-cast = "error"
+missing-source = "error"
+missing-super-call = "error"
+no-any-return = "error"
+non-exhaustive-match-open-type = "error"
+not-required-key-access = "error"
+pytorch-efficiency-lints = "error"
+string-as-iterable = "error"
+unannotated-return = "error"
+uninitialized-instance-variable = "error"
+unknown-argument-type = "error"
+unknown-attribute-access = "error"
+unknown-attribute-type = "error"
+unknown-return-type = "error"
+unknown-variable-type = "error"
+unsupported-dynamic-base = "error"
+untyped-class-decorator = "error"
+untyped-function-decorator = "error"
+untyped-namedtuple = "error"
+unused-call-result = false  # Discarding results such as Path.write_text()'s byte count is routine.
+unused-type-ignore = "error"
+# Warnings by default:
+attribute-assign-on-never = "error"
+coverage-missing = "error"
+coverage-partial = "error"
+deprecated = "error"
+division-by-zero = "error"
+implicit-import = "error"
+invalid-decorator = "error"
+misplaced-ignore = "error"
+missing-attribute-patch-target = "error"
+name-mismatch = "error"
+non-convergent-recursion = "error"
+non-exhaustive-match = "error"
+redundant-cast = "error"
+redundant-condition = "error"
+unnecessary-comparison = "error"
+unnecessary-type-conversion = "error"
+unreachable = "error"
+unreachable-except-clause = "error"
+unreachable-match-case = "error"
+unresolvable-dunder-all = "error"
+untyped-import = "error"
+useless-overload-body = "error"
+variance-mismatch = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+strict = true
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["-ra"]
+filterwarnings = ["error"]
+markers = [
+    "container: needs Docker (the daemon or the CLI); skip with -m 'not container'",
+]
+
+[tool.importlinter]
+root_package = "tally_aloft"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Dependencies point inward"
+type = "layers"
+layers = [
+    "tally_aloft.main | tally_aloft.worker",
+    "tally_aloft.bootstrap",
+    "tally_aloft.adapters",
+    "tally_aloft.application",
+    "tally_aloft.domain",
+]
+
+# Levels inside each package. Every domain has a package in both.
+# Same-level domains go on one line, separated by " | ".
+[[tool.importlinter.contracts]]
+name = "Domain levels within domain/ and application/"
+type = "layers"
+containers = ["tally_aloft.domain", "tally_aloft.application"]
+layers = [
+    "shared",
+]
+exhaustive = true
+exhaustive_ignores = ["ports", "registry"]
+
+# Levels across the two packages, so a use case can't reach up into a
+# higher domain's rules. Each line pairs a domain with its use cases;
+# same-level domains join the same line with " : ".
+[[tool.importlinter.contracts]]
+name = "Domain levels across domain/ and application/"
+type = "layers"
+layers = [
+    "tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters are independent"
+type = "independence"
+modules = [
+    "tally_aloft.adapters.inbound.*",
+    "tally_aloft.adapters.outbound.*",
+]
+
+# Every installed framework or vendor package. Add each new one when it's
+# adopted; a package that isn't installed fails the contract.
+[[tool.importlinter.contracts]]
+name = "Domain and application have no framework or vendor code"
+type = "forbidden"
+source_modules = ["tally_aloft.domain", "tally_aloft.application"]
+forbidden_modules = [
+    "aiohttp",
+    "alembic",
+    "asyncpg",
+    "fastapi",
+    "logfire",
+    "opentelemetry",
+    "pydantic",
+    "pydantic_settings",
+    "redis",
+    "sqlalchemy",
+    "starlette",
+    "taskiq",
+    "taskiq_redis",
+    "uvicorn",
+]
