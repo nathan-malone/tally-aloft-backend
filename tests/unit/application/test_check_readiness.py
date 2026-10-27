@@ -55,3 +55,13 @@ async def test_cancelling_the_readiness_call_propagates() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_a_check_raising_cancelled_error_fails_like_any_other() -> None:
+    class CancellingCheck:
+        name = "cancelling"
+
+        async def check(self) -> None:
+            raise asyncio.CancelledError
+
+    assert await CheckReadiness((CancellingCheck(),), TIMEOUT)() == ("cancelling",)

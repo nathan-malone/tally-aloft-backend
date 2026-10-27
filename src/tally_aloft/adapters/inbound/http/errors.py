@@ -27,21 +27,26 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# The codes of errors from the framework rather than a use case. Each is part
+# of the client contract (client-contract.md, "Errors").
+VALIDATION_FAILED = "validation_failed"
+HTTP_ERROR_FALLBACK = "http_error"
 INTERNAL_ERROR = "internal_error"
+NOT_READY = "not_ready"
+
 _INTERNAL_MESSAGE = "An internal error occurred."
 _VALIDATION_MESSAGE = "The request is invalid."
 _HTTP_ERROR_MESSAGE = "The request failed."
 
-# Codes for the 4xx errors the framework itself raises. Each is part of the
-# client contract, so it is written out rather than taken from the status
-# phrase, which Python's releases reword. Any other 4xx is `http_error`.
+# Codes for the 4xx errors the framework itself raises, written out rather
+# than taken from the status phrase, which Python's releases reword. Any other
+# 4xx is `HTTP_ERROR_FALLBACK`.
 HTTP_ERROR_CODES: Final[Mapping[int, str]] = MappingProxyType(
     {
         HTTPStatus.NOT_FOUND: "not_found",
         HTTPStatus.METHOD_NOT_ALLOWED: "method_not_allowed",
     }
 )
-HTTP_ERROR_FALLBACK = "http_error"
 
 # The status of each concrete domain and application error, keyed by its exact
 # class: a subclass needs its own entry. A test fails when one is missing.
@@ -99,7 +104,14 @@ def unmapped_errors(
 def install_exception_handlers(
     app: FastAPI, statuses: Mapping[type[CodedError], HTTPStatus]
 ) -> None:
-    """Answer handled errors with the shared body, mapping use cases by `statuses`."""
+    """
+    Answer handled errors with the shared body, mapping use cases by `statuses`.
+
+    Each handler takes any `Exception`, the type Starlette's handlers have, and
+    narrows it with `isinstance`; the branch that re-raises is unreachable,
+    because Starlette picks the handler by the exception's class. Only the
+    use-case handler needs `statuses`, so only it is defined here.
+    """
 
     async def coded_error(_request: Request, error: Exception) -> Response:
         if not isinstance(error, CodedError):
@@ -121,7 +133,10 @@ async def _validation_error(_request: Request, error: Exception) -> Response:
         raise error
     errors: list[JsonValue] = [
         {
-            "loc": [str(part) for part in detail["loc"]],
+            # List indices stay integers, so they differ from object keys.
+            "loc": [
+                part if isinstance(part, int) else str(part) for part in detail["loc"]
+            ],
             "message": str(detail["msg"]),
             "type": str(detail["type"]),
         }
@@ -129,7 +144,7 @@ async def _validation_error(_request: Request, error: Exception) -> Response:
     ]
     return error_response(
         HTTPStatus.UNPROCESSABLE_CONTENT,
-        "validation_failed",
+        VALIDATION_FAILED,
         _VALIDATION_MESSAGE,
         {"errors": errors},
     )

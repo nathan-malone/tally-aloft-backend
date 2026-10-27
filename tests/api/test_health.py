@@ -1,11 +1,14 @@
 import time
-
-import httpx
+from typing import TYPE_CHECKING
 
 from tally_aloft.bootstrap.app import create_app
 from tally_aloft.bootstrap.container import Overrides
 from tally_aloft.bootstrap.settings import Settings
 from tests.fakes.health import FakeDependencyCheck
+from tests.support.http import request
+
+if TYPE_CHECKING:
+    import httpx
 
 # NFR-6: /readyz answers within 3 seconds even when a check hangs.
 READYZ_DEADLINE_SECONDS = 3
@@ -13,12 +16,8 @@ READYZ_DEADLINE_SECONDS = 3
 
 async def _readyz(*checks: FakeDependencyCheck) -> httpx.Response:
     app = create_app(Settings.for_tests(), Overrides(dependency_checks=checks))
-    transport = httpx.ASGITransport(app=app)
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=transport, base_url="http://api") as client,
-    ):
-        return await client.get("/readyz")
+    async with app.router.lifespan_context(app):
+        return await request(app, "GET", "/readyz")
 
 
 async def test_readyz_without_checks_is_ready_and_not_in_the_schema() -> None:

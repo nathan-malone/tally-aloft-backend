@@ -46,11 +46,11 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
     It opens no connection and builds no adapter. The lifespan builds the
     `UseCases` registry and puts it on `app.state.use_cases`.
     """
-    adapter_overrides = Overrides() if overrides is None else overrides
+    resolved_overrides = Overrides() if overrides is None else overrides
 
     @asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncGenerator[None]:
-        api.state.use_cases = build_use_cases(settings, adapter_overrides)
+        api.state.use_cases = build_use_cases(settings, resolved_overrides)
         yield
 
     app = FastAPI(
@@ -68,7 +68,7 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
         },
     )
     install_exception_handlers(
-        app, {**ERROR_STATUSES, **adapter_overrides.error_statuses}
+        app, {**ERROR_STATUSES, **resolved_overrides.error_statuses}
     )
     app.include_router(health.router)
     return app

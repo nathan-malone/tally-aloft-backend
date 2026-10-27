@@ -27,9 +27,9 @@ class CheckReadiness:
             *(self._run(check) for check in self.checks), return_exceptions=True
         )
         failed: list[str] = []
+        # Cancelling this call cancels `gather` itself, which raises. A
+        # `CancelledError` here came from a check's own code, so it is a failure.
         for check, result in zip(self.checks, results, strict=True):
-            if isinstance(result, asyncio.CancelledError):
-                raise result
             if isinstance(result, BaseException):
                 # The type only: an error's text can hold hosts or credentials.
                 _logger.warning(

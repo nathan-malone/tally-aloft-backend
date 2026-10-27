@@ -3,7 +3,7 @@ from http import HTTPStatus
 from fastapi import APIRouter, Response
 
 from tally_aloft.adapters.inbound.http.dependencies import UseCasesDep  # noqa: TC001  # FastAPI reads route annotations at runtime.
-from tally_aloft.adapters.inbound.http.errors import error_response
+from tally_aloft.adapters.inbound.http.errors import NOT_READY, error_response
 
 router = APIRouter()
 
@@ -31,7 +31,7 @@ async def readyz(use_cases: UseCasesDep) -> Response:
         return Response(status_code=HTTPStatus.OK)
     return error_response(
         HTTPStatus.SERVICE_UNAVAILABLE,
-        "not_ready",
+        NOT_READY,
         "Some dependencies are not ready.",
         {"failed_checks": list(failed)},
     )

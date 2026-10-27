@@ -168,11 +168,16 @@ def _check_origin(origin: str) -> str:
     host = "" if parts.hostname is None else parts.hostname
     if ":" in host:
         host = f"[{host}]"
+    # urlsplit lowercases the scheme and host and leaves out any path, query,
+    # fragment or user info, so an origin that differs from this rebuilt form
+    # isn't one a browser sends. Browsers also send a non-ASCII host in its
+    # punycode form.
     canonical = f"{parts.scheme}://{host}" + ("" if port is None else f":{port}")
     if (
         parts.scheme not in _DEFAULT_PORTS
         or host == ""
-        or port == _DEFAULT_PORTS[parts.scheme]
+        or not host.isascii()
+        or port in {0, _DEFAULT_PORTS[parts.scheme]}
         or canonical != origin
     ):
         raise ValueError(_NOT_AN_ORIGIN)

@@ -25,6 +25,7 @@ def schema_text() -> str:
     """Return the app's schema as `openapi.json` holds it."""
     app = create_app(Settings.for_schema_export())
     check_schema(app)
+    # FastAPI caches the schema, so this is the one `check_schema` checked.
     return json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n"
 
 
@@ -47,7 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not arguments.check:
         _ = output.write_text(text, encoding="utf-8", newline="\n")
         return 0
-    if not output.is_file() or output.read_text(encoding="utf-8") != text:
+    # Bytes, not text, so a file with CRLF line endings is stale too.
+    if not output.is_file() or output.read_bytes() != text.encode():
         print(f"{output} is out of date; run `make openapi.fix`.", file=sys.stderr)  # noqa: T201  # A CLI reports on stderr.
         return 1
     return 0

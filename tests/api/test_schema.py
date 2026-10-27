@@ -1,10 +1,12 @@
+from enum import Enum
+
 import pytest
 from fastapi import APIRouter, FastAPI
 
 from tally_aloft.adapters.inbound.http.operation_ids import SchemaError, check_schema
 from tally_aloft.bootstrap.app import create_app
 from tally_aloft.bootstrap.settings import Settings
-from tests.support import contract_routes
+from tests.support.contract_routes import contract_app
 
 
 def _app(*routers: APIRouter) -> FastAPI:
@@ -31,7 +33,7 @@ def test_operation_id_is_the_tag_and_the_function_name() -> None:
 
 
 def test_app_with_the_contract_routes_passes_the_check() -> None:
-    check_schema(_app(contract_routes.router))
+    check_schema(contract_app())
 
 
 def test_untagged_route_fails_the_check_by_name() -> None:
@@ -65,3 +67,29 @@ def test_duplicate_operation_ids_fail_the_check_naming_both_routes() -> None:
     message = str(error.value)
     assert "GET /one/flights shares its operation ID logbook_list_flights" in message
     assert "GET /two/flights shares its operation ID logbook_list_flights" in message
+
+
+def test_operation_id_uses_the_function_name_not_the_route_name() -> None:
+    router = APIRouter(tags=["logbook"])
+
+    @router.get("/flights", name="flights-page")
+    async def list_flights() -> list[str]:
+        return []
+
+    schema = _app(router).openapi()
+
+    assert schema["paths"]["/flights"]["get"]["operationId"] == "logbook_list_flights"
+
+
+def test_plain_enum_tag_fails_the_check_by_name() -> None:
+    class Tags(Enum):
+        LOGBOOK = "logbook"
+
+    router = APIRouter(tags=[Tags.LOGBOOK])
+
+    @router.get("/flights")
+    async def list_flights() -> list[str]:
+        return []
+
+    with pytest.raises(SchemaError, match="GET /flights has operation ID"):
+        check_schema(_app(router))

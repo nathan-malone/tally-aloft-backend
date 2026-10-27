@@ -1,34 +1,23 @@
 from typing import TYPE_CHECKING
 
-import httpx
-
-from tally_aloft.bootstrap.app import create_app
-from tally_aloft.bootstrap.settings import Settings
-from tests.support import contract_routes
-
 if TYPE_CHECKING:
-    from fastapi import FastAPI
+    import httpx
 
-ORIGIN = "https://tallyaloft.app"
-
-
-def _app() -> FastAPI:
-    app = create_app(Settings.for_tests(cors_origins=ORIGIN))
-    app.include_router(contract_routes.router)
-    return app
+from tests.support.contract_routes import ORIGIN, contract_app
+from tests.support.http import request
 
 
 async def _preflight(origin: str, headers: str) -> httpx.Response:
-    transport = httpx.ASGITransport(app=_app())
-    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
-        return await client.options(
-            "/test/body",
-            headers={
-                "Origin": origin,
-                "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": headers,
-            },
-        )
+    return await request(
+        contract_app(),
+        "OPTIONS",
+        "/test/body",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": headers,
+        },
+    )
 
 
 async def test_preflight_from_the_web_app_is_allowed_without_credentials() -> None:
@@ -56,9 +45,9 @@ async def test_preflight_for_an_unlisted_header_is_not_allowed() -> None:
 
 
 async def test_not_found_carries_cors_headers() -> None:
-    transport = httpx.ASGITransport(app=_app())
-    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
-        response = await client.get("/test/nowhere", headers={"Origin": ORIGIN})
+    response = await request(
+        contract_app(), "GET", "/test/nowhere", headers={"Origin": ORIGIN}
+    )
 
     assert response.status_code == 404
     assert response.json()["code"] == "not_found"

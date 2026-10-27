@@ -114,6 +114,8 @@ def test_parses_cors_origins(
         "https://tallyaloft.app:443",
         "http://localhost:80",
         "https://tallyaloft.app:99999",
+        "https://tallyaloft.app:0",
+        "https://bücher.example",
         "ftp://tallyaloft.app",
         "tallyaloft.app",
         "null",
