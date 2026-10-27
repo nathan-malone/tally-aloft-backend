@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from fastapi import FastAPI, Request
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _logger = logging.getLogger(__name__)
 
@@ -153,6 +154,48 @@ async def _http_error(request: Request, error: Exception) -> Response:
         message,
         headers=error.headers,
     )
+
+
+class UnhandledErrorMiddleware:
+    """
+    Answer any exception nothing else handled with `500 internal_error`.
+
+    It sits just inside `CORSMiddleware`, so the `500` carries CORS headers:
+    Starlette's own `ServerErrorMiddleware` sits outside every user middleware,
+    and its responses have none. The body never holds the exception's text;
+    the exception is logged with its type and stack trace instead. This is the
+    only place an unhandled exception is visible, because no middleware outside
+    it sees one, so exception telemetry is recorded here.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        """Wrap `app`."""
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Run the app, answering an unhandled exception if nothing was sent."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception as error:
+            if started:
+                # Too late for a new response; the server logs and closes it.
+                raise
+            log_unhandled(error, str(scope["method"]), str(scope["path"]))
+            response = error_response(
+                HTTPStatus.INTERNAL_SERVER_ERROR, INTERNAL_ERROR, _INTERNAL_MESSAGE
+            )
+            await response(scope, receive, send)
 
 
 def log_unhandled(error: BaseException, method: str, path: str) -> None:

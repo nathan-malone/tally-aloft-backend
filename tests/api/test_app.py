@@ -4,8 +4,10 @@ from typing import NoReturn
 import httpx
 import pytest
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from tally_aloft.adapters.inbound.http.errors import UnhandledErrorMiddleware
 from tally_aloft.application.registry import UseCases
 from tally_aloft.bootstrap.app import create_app
 from tally_aloft.bootstrap.settings import Settings
@@ -44,10 +46,14 @@ async def test_livez_returns_200_and_is_not_in_the_schema() -> None:
     assert "/livez" not in app.openapi().get("paths", {})
 
 
-def test_proxy_headers_middleware_is_outermost() -> None:
+def test_middleware_order_from_the_outside_in() -> None:
     app = create_app(Settings.for_tests())
 
-    assert app.user_middleware[0].cls is ProxyHeadersMiddleware
+    assert [middleware.cls for middleware in app.user_middleware] == [
+        ProxyHeadersMiddleware,
+        CORSMiddleware,
+        UnhandledErrorMiddleware,
+    ]
 
 
 @pytest.mark.parametrize(

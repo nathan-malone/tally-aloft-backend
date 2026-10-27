@@ -4,12 +4,14 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http import health
 from tally_aloft.adapters.inbound.http.errors import (
     ERROR_STATUSES,
     ErrorBody,
+    UnhandledErrorMiddleware,
     install_exception_handlers,
 )
 from tally_aloft.bootstrap.container import Overrides, build_use_cases
@@ -20,6 +22,20 @@ if TYPE_CHECKING:
     from tally_aloft.bootstrap.settings import Settings
 
 _TITLE = "Tally Aloft API"
+# What browsers may send cross-origin: the client contract's methods and
+# request headers. Starlette also allows the CORS-safelisted headers.
+_CORS_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+_CORS_HEADERS = (
+    "Authorization",
+    "Content-Type",
+    "Idempotency-Key",
+    "X-Client-Platform",
+    "X-Client-Version",
+    "traceparent",
+    "tracestate",
+    "sentry-trace",
+    "baggage",
+)
 
 
 def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAPI:
@@ -60,16 +76,30 @@ def _middleware(settings: Settings) -> list[Middleware]:
     """
     Return the app's user middleware, outermost first.
 
-    The proxy-headers wrapper comes first. It never responds, and it must set
-    the real client address before anything else reads it. Starlette always
-    wraps every user middleware in its own `ServerErrorMiddleware`, which
-    answers unhandled errors with a 500 but never reads the client address.
-    Uvicorn's own proxy handling is off (`--no-proxy-headers`), so the trusted
-    networks come only from settings.
+    1. The proxy-headers wrapper comes first. It never responds, and it must
+       set the real client address before anything else reads it. Uvicorn's
+       own proxy handling is off (`--no-proxy-headers`), so the trusted
+       networks come only from settings.
+    2. CORS is the outermost middleware that responds, so its headers reach
+       every response to an allowed origin, rejections included. Credentials
+       stay off, because clients authenticate with bearer tokens.
+    3. The unhandled-error middleware sits inside CORS, so its `500`s carry
+       CORS headers. Starlette's own `ServerErrorMiddleware` wraps this whole
+       list, and its responses have none.
+
+    Later middleware, such as the client-version check, goes after these.
     """
     return [
         Middleware(
             ProxyHeadersMiddleware,
             trusted_hosts=[str(network) for network in settings.forwarded_allow_ips],
         ),
+        Middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_methods=_CORS_METHODS,
+            allow_headers=_CORS_HEADERS,
+            allow_credentials=False,
+        ),
+        Middleware(UnhandledErrorMiddleware),
     ]

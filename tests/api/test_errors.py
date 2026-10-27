@@ -1,5 +1,6 @@
 import importlib
 import json
+import logging
 import pkgutil
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -26,7 +27,6 @@ from tests.support.contract_routes import (
     MAPPED_STATUS,
     ContractChildError,
     ContractMappedError,
-    ContractUnmappedError,
 )
 from tests.support.paths import ROOT
 
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 # Entry points read settings at import, and define no errors.
 ENTRY_POINTS = {"tally_aloft.main", "tally_aloft.worker"}
 BODY_KEYS = {"code", "message", "details"}
+ORIGIN = "https://tallyaloft.app"
 
 
 def _app(overrides: Overrides | None = None) -> FastAPI:
@@ -138,9 +139,35 @@ async def test_mapped_error_uses_its_status_code_and_message() -> None:
     }
 
 
-async def test_unmapped_error_is_not_answered_by_the_handler() -> None:
-    with pytest.raises(ContractUnmappedError):
-        await _request(_app(), "GET", "/test/unmapped")
+@pytest.mark.parametrize("path", ["/test/unmapped", "/test/crash"])
+async def test_unhandled_errors_become_internal_errors(
+    path: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    app = create_app(Settings.for_tests(cors_origins=ORIGIN))
+    app.include_router(contract_routes.router)
+
+    response = await _request(app, "GET", path, headers={"Origin": ORIGIN})
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "code": "internal_error",
+        "message": "An internal error occurred.",
+        "details": {},
+    }
+    assert response.headers["access-control-allow-origin"] == ORIGIN
+    assert LEAK_MARKER not in response.text
+    assert "Traceback" not in response.text
+    [record] = caplog.records
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+
+
+async def test_unhandled_error_log_names_the_exception_type(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await _request(_app(), "GET", "/test/crash")
+
+    assert "RuntimeError" in caplog.text
 
 
 def test_unmapped_errors_finds_a_class_missing_from_the_table() -> None:

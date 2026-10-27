@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from typing import Annotated, override
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError, field_validator
 from pydantic_settings import (
@@ -22,6 +23,11 @@ _PARSE_ERROR_FIELD = re.compile(r'field "(?P<field>\w+)"')
 
 
 _TRUSTS_EVERYONE = "would trust every address; list the proxies' networks"
+_ALLOWS_EVERY_ORIGIN = "would allow every origin; list the web app's origins"
+_NOT_AN_ORIGIN = (
+    "must be a lowercase scheme://host[:port], with no path and no default port"
+)
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 class Environment(StrEnum):
@@ -56,15 +62,18 @@ class Settings(BaseSettings):
         IPv4Network("127.0.0.1/32"),
     )
 
+    # The browser origins, such as https://tallyaloft.app, that CORS allows.
+    # Starlette compares origins as exact strings, and browsers send them in
+    # lowercase without a default port, so any other form is rejected rather
+    # than silently matching nothing.
+    cors_origins: Annotated[tuple[str, ...], NoDecode] = ()
+
     @field_validator("forwarded_allow_ips", mode="before")
     @classmethod
     def _parse_networks(cls, value: object) -> object:
         """Parse comma-separated addresses or networks, dropping empty parts."""
-        if isinstance(value, str):
-            parts: Sequence[object] = value.split(",")
-        elif isinstance(value, Sequence):
-            parts = value
-        else:
+        parts = _list_parts(value)
+        if parts is None:
             return value
         networks: list[IPv4Network | IPv6Network] = []
         for part in parts:
@@ -80,6 +89,16 @@ class Settings(BaseSettings):
                     raise ValueError(_TRUSTS_EVERYONE)
                 networks.append(network)
         return tuple(networks)
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_origins(cls, value: object) -> object:
+        """Parse comma-separated origins, dropping empty parts."""
+        parts = _list_parts(value)
+        if parts is None:
+            return value
+        origins = [str(part).strip() for part in parts]
+        return tuple(_check_origin(origin) for origin in origins if origin != "")
 
     @classmethod
     def for_tests(cls, **values: object) -> Settings:
@@ -126,6 +145,38 @@ class _ExplicitSettings(Settings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (init_settings,)
+
+
+def _list_parts(value: object) -> Sequence[object] | None:
+    """Return a list setting's parts: a string split on commas, or a sequence."""
+    if isinstance(value, str):
+        return value.split(",")
+    if isinstance(value, Sequence):
+        return value
+    return None
+
+
+def _check_origin(origin: str) -> str:
+    """Return `origin` if it is exactly a browser's form of one, else raise."""
+    if origin == "*":
+        raise ValueError(_ALLOWS_EVERY_ORIGIN)
+    parts = urlsplit(origin)
+    try:
+        port = parts.port
+    except ValueError:
+        raise ValueError(_NOT_AN_ORIGIN) from None
+    host = "" if parts.hostname is None else parts.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    canonical = f"{parts.scheme}://{host}" + ("" if port is None else f":{port}")
+    if (
+        parts.scheme not in _DEFAULT_PORTS
+        or host == ""
+        or port == _DEFAULT_PORTS[parts.scheme]
+        or canonical != origin
+    ):
+        raise ValueError(_NOT_AN_ORIGIN)
+    return origin
 
 
 def load_settings() -> Settings:

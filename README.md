@@ -65,3 +65,4 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | --- | --- | --- | --- |
 | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
 | `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |
+| `TALLY_CORS_ORIGINS` | Comma-separated browser origins that CORS allows, such as `https://tallyaloft.app`. Each is exactly a lowercase `scheme://host[:port]`, with no path and no default port. `*` is rejected. | none | no |
