@@ -9,6 +9,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http.errors import UnhandledErrorMiddleware
 from tally_aloft.application.registry import UseCases
+from tally_aloft.application.shared.check_readiness import CheckReadiness
 from tally_aloft.bootstrap.app import create_app
 from tally_aloft.bootstrap.settings import Settings
 from tests.support import probe_routes
@@ -32,7 +33,9 @@ async def test_lifespan_sets_the_use_cases() -> None:
     app = create_app(Settings.for_tests())
 
     async with app.router.lifespan_context(app):
-        assert isinstance(app.state.use_cases, UseCases)
+        use_cases = app.state.use_cases
+        assert isinstance(use_cases, UseCases)
+        assert isinstance(use_cases.check_readiness, CheckReadiness)
 
 
 async def test_livez_returns_200_and_is_not_in_the_schema() -> None:
