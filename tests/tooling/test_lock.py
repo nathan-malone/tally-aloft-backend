@@ -58,6 +58,14 @@ def test_npm_resolution_takes_only_releases_at_least_7_days_old() -> None:
     assert setting is not None
 
 
+def test_npm_tools_never_install_before_running() -> None:
+    workspace = (ROOT / "pnpm-workspace.yaml").read_text()
+
+    setting = re.search(r"^verifyDepsBeforeRun: error$", workspace, re.MULTILINE)
+
+    assert setting is not None
+
+
 def test_lock_pins_the_core_runtime_and_dev_tools() -> None:
     assert (RUNTIME | DEV) - _locked_names() == set()
 

@@ -1,3 +1,4 @@
+import json
 import re
 
 from tests.support.paths import ROOT
@@ -15,8 +16,10 @@ POLICY = {
     "telemetry.enabled": "false",
     # Any finding, or an engine that can't run, fails the check.
     "ci.failBelow": "100",
+    "ci.baseline": ".aislop/ci-baseline.json",
     "ci.failOnMissingTools": "true",
 }
+BASELINE = ROOT / ".aislop" / "ci-baseline.json"
 
 
 def _settings() -> dict[str, str]:
@@ -38,3 +41,9 @@ def test_config_keeps_the_check_policy() -> None:
     settings = _settings()
 
     assert {key: settings.get(key) for key in POLICY} == POLICY
+
+
+def test_baseline_accepts_no_findings() -> None:
+    baseline = json.loads(BASELINE.read_text())
+
+    assert baseline == {"version": 1, "entries": []}

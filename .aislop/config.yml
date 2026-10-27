@@ -12,8 +12,11 @@ security:
   # Dependency audits need the network and an auditor; scans stay offline.
   audit: false
 ci:
-  # Any finding fails the check, and so does an engine that can't run.
+  # Any finding fails the check, and so does an engine that can't run. The
+  # score rounds, so a few low-impact findings still score 100; the empty
+  # baseline makes aislop fail on any finding not in it, whatever the score.
   failBelow: 100
+  baseline: .aislop/ci-baseline.json
   failOnMissingTools: true
 telemetry:
   enabled: false

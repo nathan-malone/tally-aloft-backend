@@ -6,9 +6,10 @@ from tests.support.makefile import targets
 from tests.support.paths import ROOT
 
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-USES = re.compile(r"^\s*-?\s*uses:\s*(?P<action>\S+)", re.MULTILINE)
-# An exact release, such as v7.0.1, never a major tag such as v7.
-PINNED = re.compile(r"^[\w.-]+/[\w.-]+@v\d+\.\d+\.\d+$")
+USES = re.compile(r"^\s*-?\s*uses:\s*(?P<action>.+?)\s*$", re.MULTILINE)
+# A full commit SHA, which can't be moved as a tag can, then its exact release,
+# such as `# v7.0.1`, never a major tag such as v7.
+PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
 RUN = re.compile(r"^\s*run:\s*(?P<command>.+)$", re.MULTILINE)
 # CI runs everything `make check` does, so adding a check to the Makefile
 # without a CI step fails here. What each target runs is in test_makefile.py.
@@ -42,7 +43,7 @@ def test_token_can_only_read_contents() -> None:
     assert re.search(r":\s*write\b", workflow) is None
 
 
-def test_every_action_is_pinned_to_an_exact_version() -> None:
+def test_every_action_is_pinned_to_a_commit_and_its_release() -> None:
     actions = [match.group("action") for match in USES.finditer(_workflow())]
 
     assert actions != []
