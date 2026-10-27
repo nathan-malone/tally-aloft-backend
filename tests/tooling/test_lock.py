@@ -1,7 +1,7 @@
 import tomllib
 from typing import cast
 
-from tests.support.paths import ROOT
+from tests.support.paths import ROOT, pyproject
 
 RUNTIME = {
     "alembic",
@@ -32,10 +32,21 @@ LOGFIRE_EXTRAS = {
 }
 
 
+def _lock() -> dict[str, object]:
+    return tomllib.loads((ROOT / "uv.lock").read_text())
+
+
 def _locked_names() -> set[str]:
-    lock = tomllib.loads((ROOT / "uv.lock").read_text())
-    packages = cast("list[dict[str, object]]", lock["package"])
+    packages = cast("list[dict[str, object]]", _lock()["package"])
     return {str(package["name"]) for package in packages}
+
+
+def test_resolution_takes_only_releases_at_least_7_days_old() -> None:
+    uv = cast("dict[str, dict[str, object]]", pyproject()["tool"])["uv"]
+    options = cast("dict[str, object]", _lock()["options"])
+
+    assert uv["exclude-newer"] == "7 days"
+    assert options["exclude-newer-span"] == "P7D"
 
 
 def test_lock_pins_the_core_runtime_and_dev_tools() -> None:

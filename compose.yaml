@@ -1,7 +1,7 @@
 # Local development. Profile `app` runs every process in containers, built from
 # the one Dockerfile:
 #
-#   docker compose --profile app up --build
+#   make containers.up    (docker compose --profile app up --build)
 #
 # Postgres and Valkey join this file, outside the profile, in later stories.
 name: tally-aloft-backend

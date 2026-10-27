@@ -1,5 +1,6 @@
 # Every pull request runs the six checks on native ARM64, the architecture the
-# image ships for. A failing step fails the run.
+# image ships for. A failing step fails the run. Each step calls a Makefile
+# target, so the commands live in the Makefile only.
 name: CI
 
 on:
@@ -22,37 +23,35 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       # Installs the uv version in pyproject.toml's required-version.
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.0
       - name: Install dependencies
-        run: uv sync --locked
-      - name: ruff check
-        run: uv run ruff check
-      - name: ruff format --check
-        run: uv run ruff format --check
-      - name: pyrefly check
-        run: uv run pyrefly check
-      - name: lint-imports
-        run: uv run lint-imports
+        run: make packages.install
+      - name: Check linting and formatting
+        run: make lint.check
+      - name: Check types
+        run: make types.check
+      - name: Check module boundaries
+        run: make boundaries.check
 
   test:
     name: Image and tests
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.0
       - name: Install dependencies
-        run: uv sync --locked
+        run: make packages.install
       - name: Build the image
-        run: docker build --platform linux/arm64 -t tally-aloft-backend:ci .
-      - name: pytest
-        run: uv run pytest
+        run: make image.build IMAGE=tally-aloft-backend:ci PLATFORM=linux/arm64
+      - name: Run tests
+        run: make test
         env:
           # The image tests use the image built above instead of building one.
           BACKEND_TEST_IMAGE: tally-aloft-backend:ci
