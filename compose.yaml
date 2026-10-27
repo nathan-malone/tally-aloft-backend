@@ -1,0 +1,32 @@
+# Local development. Profile `app` runs every process in containers, built from
+# the one Dockerfile:
+#
+#   make containers.up    (docker compose --profile app up --build)
+#
+# Postgres and Valkey join this file, outside the profile, in later stories.
+name: tally-aloft-backend
+
+services:
+  api:
+    profiles: ["app"]
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Container values, separate from the host's .env.
+    environment:
+      TALLY_ENVIRONMENT: development
+      TALLY_FORWARDED_ALLOW_IPS: 127.0.0.1
+    healthcheck:
+      # The image has no curl, so the check uses Python's standard library.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/livez', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+    # Compose's default of 10 seconds would kill the API mid-drain (25 seconds).
+    stop_grace_period: 30s

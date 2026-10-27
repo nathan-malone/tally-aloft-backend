@@ -1,0 +1,50 @@
+import re
+from typing import cast
+
+from tests.support.paths import ROOT, pyproject
+
+IMAGE_REFERENCE = re.compile(r"^(?:FROM\s+|COPY\s+--from=)(\S+)", re.MULTILINE)
+UV_IMAGE = re.compile(r"ghcr\.io/astral-sh/uv:(?P<version>[0-9.]+)@sha256:")
+BASE_IMAGE = re.compile(r"^FROM python:(?P<version>\d+\.\d+)-", re.MULTILINE)
+UV_SYNC = re.compile(r"\buv sync\b.*$", re.MULTILINE)
+
+
+def _dockerfile() -> str:
+    return (ROOT / "Dockerfile").read_text()
+
+
+def _external_images() -> list[str]:
+    """Return the images the Dockerfile pulls, leaving out its own stages."""
+    references = IMAGE_REFERENCE.findall(_dockerfile())
+    return [reference for reference in references if ":" in reference]
+
+
+def test_every_image_is_pinned_by_digest() -> None:
+    images = _external_images()
+
+    assert images != []
+    assert [image for image in images if "@sha256:" not in image] == []
+
+
+def test_uv_image_matches_the_required_uv_version() -> None:
+    tool = cast("dict[str, dict[str, str]]", pyproject()["tool"])
+    required = tool["uv"]["required-version"].removeprefix("==")
+    match = UV_IMAGE.search(_dockerfile())
+
+    assert match is not None
+    assert match.group("version") == required
+
+
+def test_base_image_python_matches_requires_python() -> None:
+    project = cast("dict[str, str]", pyproject()["project"])
+    requires = project["requires-python"].removeprefix("==").removesuffix(".*")
+
+    assert set(BASE_IMAGE.findall(_dockerfile())) == {requires}
+
+
+def test_every_install_is_locked_and_without_dev_dependencies() -> None:
+    syncs = UV_SYNC.findall(_dockerfile())
+
+    assert syncs != []
+    assert [sync for sync in syncs if "--locked" not in sync] == []
+    assert [sync for sync in syncs if "--no-dev" not in sync] == []

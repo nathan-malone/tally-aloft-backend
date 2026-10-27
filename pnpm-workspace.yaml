@@ -1,0 +1,7 @@
+# The backend's npm tools. Resolve only to releases at least 7 days old, so a
+# compromised release is usually yanked before it can be locked. An exception
+# goes in minimumReleaseAgeExclude, with a reason and a removal date on its line.
+minimumReleaseAge: 10080
+# pnpm exec fails when node_modules doesn't match the lockfile, rather than
+# installing and rewriting pnpm-lock.yaml, which pnpm does by default.
+verifyDepsBeforeRun: error

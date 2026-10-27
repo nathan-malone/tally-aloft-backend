@@ -1,0 +1,73 @@
+# Every pull request runs the seven checks on native ARM64, the architecture the
+# image ships for. A failing step fails the run. Each step calls a Makefile
+# target, so the commands live in the Makefile only.
+name: CI
+
+on:
+  pull_request:
+
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Every uv command asserts that uv.lock is current and never rewrites it.
+  UV_LOCKED: "1"
+
+jobs:
+  lint:
+    name: Quality checks
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    # Installs the uv version in pyproject.toml's required-version.
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+    # Node runs the npm tools in package.json. Caching stays off, because
+    # setup-node looks for pnpm before the next step installs it.
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: "24"
+        package-manager-cache: false
+    # Installs the pnpm version in package.json's packageManager.
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+    - name: Install dependencies
+      run: make packages.install
+    - name: Check linting and formatting
+      run: make lint.check
+    - name: Check types
+      run: make types.check
+    - name: Check module boundaries
+      run: make boundaries.check
+    - name: Check for patterns AI coding agents leave behind
+      run: make slop.check
+
+  test:
+    name: Build & unit tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: "24"
+        package-manager-cache: false
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+    - name: Install dependencies
+      run: make packages.install
+    - name: Build the image
+      run: make image.build IMAGE=tally-aloft-backend:ci PLATFORM=linux/arm64
+    - name: Run tests
+      run: make test
+      env:
+        # The image tests use the image built above instead of building one.
+        BACKEND_TEST_IMAGE: tally-aloft-backend:ci

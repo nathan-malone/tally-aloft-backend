@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "aislop": ">=0.18.1"
+  }
+}
