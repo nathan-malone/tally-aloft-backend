@@ -2,7 +2,7 @@ import ipaddress
 import re
 from collections.abc import Sequence
 from enum import StrEnum
-from ipaddress import IPv4Network, IPv6Network
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from typing import Annotated, override
 from urllib.parse import urlsplit
 
@@ -25,9 +25,12 @@ _PARSE_ERROR_FIELD = re.compile(r'field "(?P<field>\w+)"')
 _TRUSTS_EVERYONE = "would trust every address; list the proxies' networks"
 _ALLOWS_EVERY_ORIGIN = "would allow every origin; list the web app's origins"
 _NOT_AN_ORIGIN = (
-    "must be a lowercase scheme://host[:port], with no path and no default port"
+    "must be a scheme://host[:port] as a browser sends it: lowercase, with no "
+    "path and no default port"
 )
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+# A host label a browser parses as a number, which makes the host IPv4.
+_NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
 
 
 class Environment(StrEnum):
@@ -165,9 +168,7 @@ def _check_origin(origin: str) -> str:
         port = parts.port
     except ValueError:
         raise ValueError(_NOT_AN_ORIGIN) from None
-    host = "" if parts.hostname is None else parts.hostname
-    if ":" in host:
-        host = f"[{host}]"
+    host = "" if parts.hostname is None else _browser_host(parts.hostname)
     # urlsplit lowercases the scheme and host and leaves out any path, query,
     # fragment or user info, so an origin that differs from this rebuilt form
     # isn't one a browser sends. Browsers also send a non-ASCII host in its
@@ -182,6 +183,42 @@ def _check_origin(origin: str) -> str:
     ):
         raise ValueError(_NOT_AN_ORIGIN)
     return origin
+
+
+def _browser_host(hostname: str) -> str:
+    """
+    Return `hostname` as a browser writes it in an origin, or "" if it can't be.
+
+    A browser writes an IPv6 address in brackets, compressed, with no zone and
+    no dotted IPv4 part, and reads a host whose last label is a number as an
+    IPv4 address, which it writes as four decimal numbers: `127.1` is sent as
+    `127.0.0.1`. Other hosts are kept as they are.
+    """
+    if ":" in hostname:
+        return _browser_ipv6_host(hostname)
+    last_label = hostname.removesuffix(".").rpartition(".")[2]
+    if _NUMBER_LABEL.fullmatch(last_label) is not None:
+        try:
+            return str(IPv4Address(hostname))
+        except ValueError:
+            return ""
+    return hostname
+
+
+def _browser_ipv6_host(hostname: str) -> str:
+    """Return an IPv6 `hostname` as `_browser_host` describes."""
+    try:
+        address = IPv6Address(hostname)
+    except ValueError:
+        return ""
+    if address.scope_id is not None:
+        return ""
+    mapped = address.ipv4_mapped
+    if mapped is None:
+        # Python compresses as browsers do: the first longest zero run.
+        return f"[{address.compressed}]"
+    # Python writes the IPv4 part dotted; browsers write it in hex.
+    return f"[::ffff:{int(mapped) >> 16:x}:{int(mapped) & 0xFFFF:x}]"
 
 
 def load_settings() -> Settings:

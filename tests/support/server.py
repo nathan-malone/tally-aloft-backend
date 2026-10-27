@@ -72,7 +72,13 @@ def running_server(app: str, env: Mapping[str, str]) -> Generator[str]:
             yield base_url
         finally:
             process.terminate()
-            process.wait(timeout=STOP_TIMEOUT_SECONDS)
+            try:
+                process.wait(timeout=STOP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # Never leave a server running after the test.
+                process.kill()
+                process.wait()
+                raise
 
 
 def _wait_until_live(
