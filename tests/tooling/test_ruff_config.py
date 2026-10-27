@@ -1,6 +1,7 @@
 import subprocess
-import sys
 from typing import cast
+
+from ruff import find_ruff_bin
 
 from tests.support.paths import PYPROJECT, ROOT, pyproject
 
@@ -36,11 +37,10 @@ def _ruff_lint_lines() -> list[str]:
 
 
 def _ruff_check(source: str, filename: str) -> subprocess.CompletedProcess[str]:
+    # The binary itself, not `python -m ruff`, which starts Python to find it.
     return subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "ruff",
+            find_ruff_bin(),
             "check",
             "--no-cache",
             "--output-format",

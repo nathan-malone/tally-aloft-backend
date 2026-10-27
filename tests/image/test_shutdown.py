@@ -9,6 +9,8 @@ import pytest
 from tests.support.containers import unique_name, wait_for_log
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import docker
     from docker.models.containers import Container
     from docker.models.images import Image
@@ -16,30 +18,43 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.container
 
-MAX_EXIT_SECONDS = 30
+DRAIN_FLAG = "--timeout-graceful-shutdown"
+# The exit test shortens the image's 25-second drain, so it doesn't wait it out;
+# test_image pins the real value. The exit limit keeps the image contract's
+# headroom: a 25-second drain inside a 30-second stop.
+TEST_DRAIN_SECONDS = 2
+MAX_EXIT_SECONDS = TEST_DRAIN_SECONDS + 5
 
 
 @pytest.fixture
-def api(
+def start_api(
     docker_client: docker.DockerClient,
     api_image: Image,
-    probe_command: list[str],
     tests_mount: Mount,
     started_containers: list[Container],
-) -> Container:
-    container = docker_client.containers.run(
-        api_image,
-        probe_command,
-        detach=True,
-        name=unique_name("api"),
-        environment={"TALLY_ENVIRONMENT": "test"},
-        mounts=[tests_mount],
-        ports={"8000/tcp": ("127.0.0.1", 0)},  # Port 0: Docker picks a free one.
-    )
-    started_containers.append(container)
-    wait_for_log(container, "Application startup complete")
-    container.reload()
-    return container
+) -> Callable[[list[str]], Container]:
+    def start(command: list[str]) -> Container:
+        container = docker_client.containers.run(
+            api_image,
+            command,
+            detach=True,
+            name=unique_name("api"),
+            environment={"TALLY_ENVIRONMENT": "test"},
+            mounts=[tests_mount],
+            ports={"8000/tcp": ("127.0.0.1", 0)},  # Port 0: Docker picks a free one.
+        )
+        started_containers.append(container)
+        wait_for_log(container, "Application startup complete")
+        container.reload()
+        return container
+
+    return start
+
+
+def _with_drain_seconds(command: list[str], seconds: int) -> list[str]:
+    """Return `command` with its graceful-shutdown timeout set to `seconds`."""
+    value = command.index(DRAIN_FLAG) + 1
+    return [*command[:value], str(seconds), *command[value + 1 :]]
 
 
 def _base_url(container: Container) -> str:
@@ -49,7 +64,10 @@ def _base_url(container: Container) -> str:
     return f"http://127.0.0.1:{port}"
 
 
-async def test_in_flight_request_completes_after_sigterm(api: Container) -> None:
+async def test_in_flight_request_completes_after_sigterm(
+    start_api: Callable[[list[str]], Container], probe_command: list[str]
+) -> None:
+    api = start_api(probe_command)
     async with httpx.AsyncClient(base_url=_base_url(api), timeout=30) as client:
         request = asyncio.create_task(client.get("/test/sleep", params={"seconds": 2}))
         await asyncio.to_thread(wait_for_log, api, "sleep started")
@@ -59,7 +77,10 @@ async def test_in_flight_request_completes_after_sigterm(api: Container) -> None
     assert response.status_code == 200
 
 
-async def test_process_exits_within_30_seconds_of_sigterm(api: Container) -> None:
+async def test_process_exits_when_the_drain_timeout_ends(
+    start_api: Callable[[list[str]], Container], probe_command: list[str]
+) -> None:
+    api = start_api(_with_drain_seconds(probe_command, TEST_DRAIN_SECONDS))
     async with httpx.AsyncClient(base_url=_base_url(api), timeout=90) as client:
         request = asyncio.create_task(client.get("/test/sleep", params={"seconds": 60}))
         await asyncio.to_thread(wait_for_log, api, "sleep started")

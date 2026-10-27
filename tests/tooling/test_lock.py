@@ -1,3 +1,4 @@
+import re
 import tomllib
 from typing import cast
 
@@ -49,9 +50,25 @@ def test_resolution_takes_only_releases_at_least_7_days_old() -> None:
     assert options["exclude-newer-span"] == "P7D"
 
 
+def test_npm_resolution_takes_only_releases_at_least_7_days_old() -> None:
+    workspace = (ROOT / "pnpm-workspace.yaml").read_text()
+
+    setting = re.search(r"^minimumReleaseAge: 10080$", workspace, re.MULTILINE)
+
+    assert setting is not None
+
+
 def test_lock_pins_the_core_runtime_and_dev_tools() -> None:
     assert (RUNTIME | DEV) - _locked_names() == set()
 
 
 def test_lock_pins_logfire_instrumentation_extras() -> None:
     assert LOGFIRE_EXTRAS - _locked_names() == set()
+
+
+def test_npm_lock_pins_the_slop_checker() -> None:
+    lock = (ROOT / "pnpm-lock.yaml").read_text()
+
+    pin = re.search(r"^  aislop@[\d.]+:$", lock, re.MULTILINE)
+
+    assert pin is not None

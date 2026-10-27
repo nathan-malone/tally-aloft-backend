@@ -1,4 +1,4 @@
-# Every pull request runs the six checks on native ARM64, the architecture the
+# Every pull request runs the seven checks on native ARM64, the architecture the
 # image ships for. A failing step fails the run. Each step calls a Makefile
 # target, so the commands live in the Makefile only.
 name: CI
@@ -28,6 +28,14 @@ jobs:
           persist-credentials: false
       # Installs the uv version in pyproject.toml's required-version.
       - uses: astral-sh/setup-uv@v10.3.0
+      # Node runs the npm tools in package.json. Caching stays off, because
+      # setup-node looks for pnpm before the next step installs it.
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      # Installs the pnpm version in package.json's packageManager.
+      - uses: pnpm/action-setup@v6.1.0
       - name: Install dependencies
         run: make packages.install
       - name: Check linting and formatting
@@ -36,6 +44,8 @@ jobs:
         run: make types.check
       - name: Check module boundaries
         run: make boundaries.check
+      - name: Check for patterns AI coding agents leave behind
+        run: make slop.check
 
   test:
     name: Image and tests
@@ -46,6 +56,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.0
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6.1.0
       - name: Install dependencies
         run: make packages.install
       - name: Build the image

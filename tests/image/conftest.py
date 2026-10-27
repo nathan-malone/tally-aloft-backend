@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import docker
 import pytest
 from docker.types import IPAMConfig, IPAMPool, Mount
+from filelock import FileLock
 
 from tests.support.containers import IMAGE_VARIABLE, LOCAL_TAG, docker_cli, unique_name
 from tests.support.paths import ROOT
@@ -26,14 +27,28 @@ def docker_client() -> Generator[docker.DockerClient]:
 
 
 @pytest.fixture(scope="session")
-def api_image(docker_client: docker.DockerClient) -> Image:
+def api_image(
+    docker_client: docker.DockerClient, tmp_path_factory: pytest.TempPathFactory
+) -> Image:
     tag = os.environ.get(IMAGE_VARIABLE)
-    if tag is None:
-        subprocess.run(
-            [docker_cli(), "build", "-t", LOCAL_TAG, "."], cwd=ROOT, check=True
-        )
-        tag = LOCAL_TAG
-    return docker_client.images.get(tag)
+    if tag is not None:
+        return docker_client.images.get(tag)
+    if os.environ.get("PYTEST_XDIST_WORKER") is None:
+        return _build_image(docker_client)
+    # Every build gets a new image ID and moves the tag, and Docker can remove
+    # the image the tag moved from, so the xdist workers share one build by ID.
+    # The parent of a worker's base temp directory is shared by this run only.
+    shared = tmp_path_factory.getbasetemp().parent
+    built = shared / "image-id"
+    with FileLock(shared / "image.lock"):
+        if not built.exists():
+            built.write_text(str(_build_image(docker_client).id))
+    return docker_client.images.get(built.read_text())
+
+
+def _build_image(docker_client: docker.DockerClient) -> Image:
+    subprocess.run([docker_cli(), "build", "-t", LOCAL_TAG, "."], cwd=ROOT, check=True)
+    return docker_client.images.get(LOCAL_TAG)
 
 
 @pytest.fixture(scope="session")

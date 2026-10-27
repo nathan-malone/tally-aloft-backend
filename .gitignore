@@ -7,3 +7,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+
+# npm tools; pnpm installs them from pnpm-lock.yaml.
+node_modules/

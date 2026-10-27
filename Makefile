@@ -30,8 +30,8 @@ help:
 	$(info Usage: make <target> [VARIABLE=value ...])
 	$(info )
 	$(info Packages)
-	$(info $()  packages.install        Install the locked dependencies; fails if uv.lock is stale)
-	$(info $()  packages.lock           Update uv.lock after editing pyproject.toml)
+	$(info $()  packages.install        Install the locked dependencies; fails if a lockfile is stale)
+	$(info $()  packages.lock           Update the lockfiles after editing pyproject.toml or package.json)
 	$(info $()  packages.update         Upgrade every locked package, or PACKAGE=<name> only, to releases 7+ days old, then install)
 	$(info $()  packages.outdated.show  List direct dependencies, marking those with newer releases)
 	$(info )
@@ -40,7 +40,8 @@ help:
 	$(info $()  lint.fix                Apply the linter's safe fixes and format, then report what is left)
 	$(info $()  types.check             Check types)
 	$(info $()  boundaries.check        Check the module-boundary rules)
-	$(info $()  test                    The full test suite; needs Docker. ARGS="..." goes to the test runner)
+	$(info $()  slop.check              Check for patterns AI coding agents leave behind)
+	$(info $()  test                 The full test suite; needs Docker. ARGS="..." goes to the test runner)
 	$(info $()  test.fast               The tests that don't need Docker. ARGS="..." goes to the test runner)
 	$(info $()  check                   Every check and the full test suite, as CI runs them)
 	$(info $()  check.fast              Every check and the tests that don't need Docker)
@@ -51,25 +52,35 @@ help:
 	$(info $()  containers.up           Build and run every process in containers)
 	$(info $()  containers.down         Stop and remove the containers)
 
-# Only packages.lock and packages.update may rewrite uv.lock. Every other uv
-# command passes --locked, so a stale lock fails locally as it does in CI.
+# Python packages are in pyproject.toml and uv.lock; the npm tools, run with
+# Node, are in package.json and pnpm-lock.yaml. Only packages.lock and
+# packages.update may rewrite a lockfile. Every other uv command passes
+# --locked, and pnpm installs with --frozen-lockfile, so a stale lock fails
+# locally as it does in CI. Each package manager ignores a PACKAGE it doesn't
+# manage.
 
 .PHONY: packages.install
 packages.install:
 	uv sync --locked
+	pnpm install --frozen-lockfile
 
 .PHONY: packages.lock
 packages.lock:
 	uv lock
+	pnpm install --lockfile-only
 
 .PHONY: packages.update
 packages.update:
 	uv lock $(if $(PACKAGE),--upgrade-package $(PACKAGE),--upgrade)
+	pnpm update$(if $(PACKAGE), $(PACKAGE))
 	uv sync --locked
+	pnpm install --frozen-lockfile
 
+# pnpm lists only the outdated packages, and exits 1 when it lists any.
 .PHONY: packages.outdated.show
 packages.outdated.show:
 	uv tree --locked --outdated --depth 1
+	pnpm outdated
 
 # Every *.check target is a prerequisite of check and check.fast, and CI runs
 # each of check's prerequisites; tests/tooling checks both.
@@ -99,6 +110,12 @@ boundaries.check:
 	$(banner)
 	uv run --locked lint-imports
 
+# The engines, gate and telemetry setting are in .aislop/config.yml.
+.PHONY: slop.check
+slop.check:
+	$(banner)
+	pnpm exec aislop ci --human
+
 .PHONY: test
 test:
 	$(banner)
@@ -110,10 +127,10 @@ test.fast:
 	uv run --locked pytest -m "not container" $(ARGS)
 
 .PHONY: check
-check: lint.check types.check boundaries.check test
+check: lint.check types.check boundaries.check slop.check test
 
 .PHONY: check.fast
-check.fast: lint.check types.check boundaries.check test.fast
+check.fast: lint.check types.check boundaries.check slop.check test.fast
 
 .PHONY: image.build
 image.build:

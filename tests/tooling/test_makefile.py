@@ -91,17 +91,24 @@ def test_lint_fix_formats_before_its_final_check() -> None:
     assert fix[-1] == dry_run("lint.check")[0]
 
 
+def _keeps_the_lock(command: str) -> bool:
+    tool, subcommand, *_ = command.split()
+    if tool == "uv":
+        return "--locked" in command
+    return subcommand in {"exec", "outdated"} or "--frozen-lockfile" in command
+
+
 def test_only_the_lock_targets_may_rewrite_the_lock() -> None:
     commands = [
         command
         for target in targets()
         if target not in {"help", "packages.lock", "packages.update"}
         for command in dry_run(target)
-        if command.startswith("uv ")
+        if command.startswith(("uv ", "pnpm "))
     ]
 
-    assert commands != []
-    assert [command for command in commands if "--locked" not in command] == []
+    assert {command.split()[0] for command in commands} == {"uv", "pnpm"}
+    assert [command for command in commands if not _keeps_the_lock(command)] == []
 
 
 @pytest.mark.parametrize(
@@ -111,7 +118,8 @@ def test_update_upgrades_then_installs(package: str, upgrade: str) -> None:
     update = dry_run("packages.update", f"PACKAGE={package}")
 
     assert update[0].endswith(f"lock {upgrade}")
-    assert update[1:] == dry_run("packages.install")
+    assert update[1] == f"pnpm update {package}".strip()
+    assert update[2:] == dry_run("packages.install")
 
 
 def test_image_build_targets_the_platform_only_when_given() -> None:

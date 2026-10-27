@@ -21,11 +21,13 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "filelock>=4.2.4",
     "import-linter>=2.15",
     "polyfactory>=3.3.0",
     "pyrefly>=1.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.17.1",
     "testcontainers>=4.15.0",
     "types-docker>=7.2.0",
@@ -152,7 +154,10 @@ testpaths = ["tests"]
 strict = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["-ra"]
+# One xdist worker per logical CPU. Without psutil, xdist counts logical CPUs
+# with os.sched_getaffinity or os.cpu_count. `-n0` runs in one process, as
+# --pdb needs.
+addopts = ["-ra", "-n", "logical"]
 filterwarnings = ["error"]
 markers = [
     "container: needs Docker (the daemon or the CLI); skip with -m 'not container'",

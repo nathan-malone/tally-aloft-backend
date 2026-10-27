@@ -5,6 +5,7 @@ The Tally Aloft backend: one async Python 3.14 codebase for the API, the backgro
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/), at exactly the version in `pyproject.toml`'s `required-version` (0.11.14 today). Any other version stops with an error. With the standalone installer, `uv self update 0.11.14` switches to it; otherwise install that version with your package manager. uv installs Python 3.14 itself.
+- [Node.js](https://nodejs.org/) 20 or later, and pnpm at the version in `package.json`'s `packageManager` (12.14.0 today). Node runs the npm tools that some checks use. Run `corepack enable pnpm` once (Corepack ships with Node 24 and earlier). On Windows, run `corepack enable --install-directory "$env:APPDATA\npm" pnpm` from PowerShell instead, which needs no administrator shell. Without Corepack, run `npm install --global pnpm@12.14.0`.
 - [Docker](https://docs.docker.com/get-started/get-docker/) with Compose, running. The test suite and the container mode need it.
 - [GNU Make](https://www.gnu.org/software/make/) 3.81 or later. macOS has it with the Xcode Command Line Tools, and Linux distributions package it as `make`. On Windows, run `winget install ezwinports.make` or `choco install make`; it works from PowerShell, with no bash needed.
 
@@ -22,7 +23,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make check.fast` | The same, without the tests that need Docker |
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
 | `make packages.outdated.show` | Show which direct dependencies have newer releases |
-| `make packages.update PACKAGE=ruff` | Upgrade one package in `uv.lock`, or every package without `PACKAGE` |
+| `make packages.update PACKAGE=ruff` | Upgrade one package in `uv.lock` or `pnpm-lock.yaml`, or every package without `PACKAGE` |
 
 Make doesn't print the commands it runs. `make -n <target>` prints them without running them. The conventions behind the targets are in the docs' [make commands](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/make-commands.md).
 
@@ -50,9 +51,11 @@ This builds the image from the `Dockerfile` and starts the API on <http://127.0.
 
 ## Checks
 
-`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries) and `make test` (tests).
+`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind) and `make test` (tests).
 
 `make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop.
+
+Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS="-n0"` runs them in one process, which `--pdb` needs, and `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` caps the worker count.
 
 ## Settings
 
