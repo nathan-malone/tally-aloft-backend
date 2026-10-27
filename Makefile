@@ -41,6 +41,8 @@ help:
 	$(info $()  types.check             Check types)
 	$(info $()  boundaries.check        Check the module-boundary rules)
 	$(info $()  slop.check              Check for patterns AI coding agents leave behind)
+	$(info $()  openapi.check           Check that openapi.json matches the API's schema)
+	$(info $()  openapi.fix             Write openapi.json from the API's schema)
 	$(info $()  test                 The full test suite; needs Docker. ARGS="..." goes to the test runner)
 	$(info $()  test.fast               The tests that don't need Docker. ARGS="..." goes to the test runner)
 	$(info $()  check                   Every check and the full test suite, as CI runs them)
@@ -116,6 +118,16 @@ slop.check:
 	$(banner)
 	pnpm exec aislop ci --human
 
+# openapi.json is the clients' contract, so a stale copy fails the check.
+.PHONY: openapi.check
+openapi.check:
+	$(banner)
+	uv run --locked python scripts/export_openapi.py --check
+
+.PHONY: openapi.fix
+openapi.fix:
+	uv run --locked python scripts/export_openapi.py
+
 .PHONY: test
 test:
 	$(banner)
@@ -127,10 +139,10 @@ test.fast:
 	uv run --locked pytest -m "not container" $(ARGS)
 
 .PHONY: check
-check: lint.check types.check boundaries.check slop.check test
+check: lint.check types.check boundaries.check slop.check openapi.check test
 
 .PHONY: check.fast
-check.fast: lint.check types.check boundaries.check slop.check test.fast
+check.fast: lint.check types.check boundaries.check slop.check openapi.check test.fast
 
 .PHONY: image.build
 image.build:

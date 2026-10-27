@@ -14,6 +14,7 @@ from tally_aloft.adapters.inbound.http.errors import (
     UnhandledErrorMiddleware,
     install_exception_handlers,
 )
+from tally_aloft.adapters.inbound.http.operation_ids import operation_id
 from tally_aloft.bootstrap.container import Overrides, build_use_cases
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
         title=_TITLE,
         lifespan=lifespan,
         middleware=_middleware(settings),
+        generate_unique_id_function=operation_id,
         # Documenting every route's 422 with the shared body stops FastAPI
         # from adding its own `HTTPValidationError` schema.
         responses={
