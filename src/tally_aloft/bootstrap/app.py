@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
@@ -6,12 +7,19 @@ from starlette.middleware import Middleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http import health
+from tally_aloft.adapters.inbound.http.errors import (
+    ERROR_STATUSES,
+    ErrorBody,
+    install_exception_handlers,
+)
 from tally_aloft.bootstrap.container import Overrides, build_use_cases
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from tally_aloft.bootstrap.settings import Settings
+
+_TITLE = "Tally Aloft API"
 
 
 def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAPI:
@@ -28,7 +36,22 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
         api.state.use_cases = build_use_cases(settings, adapter_overrides)
         yield
 
-    app = FastAPI(lifespan=lifespan, middleware=_middleware(settings))
+    app = FastAPI(
+        title=_TITLE,
+        lifespan=lifespan,
+        middleware=_middleware(settings),
+        # Documenting every route's 422 with the shared body stops FastAPI
+        # from adding its own `HTTPValidationError` schema.
+        responses={
+            HTTPStatus.UNPROCESSABLE_CONTENT: {
+                "model": ErrorBody,
+                "description": "Validation Error",
+            }
+        },
+    )
+    install_exception_handlers(
+        app, {**ERROR_STATUSES, **adapter_overrides.error_statuses}
+    )
     app.include_router(health.router)
     return app
 
