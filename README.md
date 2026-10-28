@@ -23,6 +23,9 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make check.fast` | The same, without the tests that need Docker |
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
 | `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
+| `make datastores.up` | Start the local data stores in containers and wait until they're healthy |
+| `make migrations.apply` | Upgrade the database in `.env` to the latest migration |
+| `make migrations.create NAME="add flights"` | Write a migration for the table models' changes |
 | `make packages.outdated.show` | Show which direct dependencies have newer releases |
 | `make packages.update PACKAGE=ruff` | Upgrade one package in `uv.lock` or `pnpm-lock.yaml`, or every package without `PACKAGE` |
 
@@ -35,12 +38,14 @@ This is the faster loop: Uvicorn reloads when the code changes.
 ```
 make packages.install
 cp .env.example .env
+make datastores.up
+make migrations.apply
 make api.run
 ```
 
-Then open <http://127.0.0.1:8000/livez>, which answers `200` with an empty body. Stop the server with Ctrl+C.
+`make datastores.up` starts Postgres in a container, on `127.0.0.1:5432`, so nothing else may use that port. `make migrations.apply` brings its database up to the latest migration. Then open <http://127.0.0.1:8000/readyz>, which answers `200` when the API can reach Postgres. Stop the server with Ctrl+C.
 
-`.env` is git-ignored. Edit it to change your local settings. `make api.run` loads it with `uv run --env-file`, and the app itself never reads it.
+`.env` is git-ignored. Edit it to change your local settings. `make api.run` and the migration targets load it with `uv run --env-file`, and the app itself never reads it.
 
 ## Run everything in containers
 
@@ -48,7 +53,9 @@ Then open <http://127.0.0.1:8000/livez>, which answers `200` with an empty body.
 make containers.up
 ```
 
-This builds the image from the `Dockerfile` and starts the API on <http://127.0.0.1:8000/livez>, bound to `127.0.0.1` only. The container's settings are in `compose.yaml`, not in `.env`. Stop it with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres, runs the migrations in a `migrate` container once Postgres is healthy, and then starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+
+The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
 
 ## Migrations
 
@@ -68,7 +75,7 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
   ```
 
   Each revision runs in its own transaction, because the block commits everything before it.
-- **New revisions** are fixed and formatted by Ruff as Alembic writes them, from `migrations/script.py.mako`.
+- **New revisions.** Change the table models in `src/tally_aloft/adapters/outbound/postgres/tables/`, then run `make migrations.create NAME="add flights"` against a database at the latest migration. Alembic compares the two, writes `migrations/versions/<date>_<revision>_add_flights.py` from `migrations/script.py.mako`, and Ruff fixes and formats it. Read it before committing: autogenerate misses some changes, such as renames, and it never writes grants.
 
 ## Checks
 

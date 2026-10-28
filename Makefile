@@ -13,13 +13,16 @@
 # Set these on the command line, as in `make test ARGS="-k settings"`. Plain `=`
 # ignores same-named environment variables; Windows often sets PLATFORM.
 #
-# Extra arguments for the test runner.
+# Extra arguments for the underlying tool: the test runner, or Compose for
+# containers.down.
 ARGS =
 # The tag and, optionally, the platform for image.build.
 IMAGE = tally-aloft-backend:local
 PLATFORM =
 # One package to upgrade with packages.update; empty upgrades every package.
 PACKAGE =
+# The message, and so the file name, of a new migration for migrations.create.
+NAME =
 
 # Names the running target, so `make check` output shows which check failed.
 banner = $(info ==> $@)
@@ -50,9 +53,14 @@ help:
 	$(info )
 	$(info Running)
 	$(info $()  image.build             Build the image as IMAGE (default $(IMAGE)), for PLATFORM if set)
+	$(info $()  datastores.up           Start the local data stores in containers and wait until they're healthy)
 	$(info $()  api.run                 Run the API on the host with reload, settings from .env)
-	$(info $()  containers.up           Build and run every process in containers)
-	$(info $()  containers.down         Stop and remove the containers)
+	$(info $()  containers.up           Build and run the migrations and every process in containers)
+	$(info $()  containers.down         Stop and remove the containers; ARGS=--volumes also deletes the data)
+	$(info )
+	$(info Migrations)
+	$(info $()  migrations.apply        Upgrade the database in .env to the latest migration)
+	$(info $()  migrations.create       Write a migration for the table models' changes, as NAME="add flights")
 
 # Python packages are in pyproject.toml and uv.lock; the npm tools, run with
 # Node, are in package.json and pnpm-lock.yaml. Only packages.lock and
@@ -148,6 +156,10 @@ check.fast: lint.check types.check boundaries.check slop.check openapi.check tes
 image.build:
 	docker build$(if $(PLATFORM), --platform $(PLATFORM)) -t $(IMAGE) .
 
+.PHONY: datastores.up
+datastores.up:
+	docker compose up --detach --wait
+
 .PHONY: api.run
 api.run:
 	uv run --locked --env-file .env uvicorn tally_aloft.main:app --reload --no-proxy-headers
@@ -158,4 +170,15 @@ containers.up:
 
 .PHONY: containers.down
 containers.down:
-	docker compose --profile app down
+	docker compose --profile app down $(ARGS)
+
+# Migrations connect as the owner role, from TALLY_MIGRATION_DATABASE_URL in
+# .env. Alembic accepts an empty message, so migrations.create checks NAME.
+.PHONY: migrations.apply
+migrations.apply:
+	uv run --locked --env-file .env alembic upgrade head
+
+.PHONY: migrations.create
+migrations.create:
+	$(if $(NAME),,$(error NAME is required, as in make migrations.create NAME="add flights"))
+	uv run --locked --env-file .env alembic revision --autogenerate -m "$(NAME)"

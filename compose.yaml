@@ -1,12 +1,61 @@
-# Local development. Profile `app` runs every process in containers, built from
-# the one Dockerfile:
+# Local development. The data stores, outside any profile, serve the host loop:
+#
+#   make datastores.up    (docker compose up --detach --wait)
+#
+# Profile `app` also runs the migrations and every process in containers,
+# built from the one Dockerfile:
 #
 #   make containers.up    (docker compose --profile app up --build)
+#   make containers.down ARGS=--volumes    (also deletes the database)
 #
-# Postgres and Valkey join this file, outside the profile, in later stories.
+# Valkey joins the data stores in a later story.
 name: tally-aloft-backend
 
 services:
+  postgres:
+    # The one place Compose's Postgres version is set; tests/support/postgres.py
+    # sets the tests' to the same, and a tooling test checks they match.
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tally_aloft
+    volumes:
+      # Creates the two login roles, once, on an empty volume.
+      - ./compose/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Postgres 18's image keeps its data under /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # Over TCP: while the init script runs, the image's server listens only
+      # on its socket, so a socket check would pass before the roles exist.
+      test:
+        - CMD
+        - pg_isready
+        - --host
+        - 127.0.0.1
+        - --username
+        - postgres
+        - --dbname
+        - tally_aloft
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  migrate:
+    profiles: ["app"]
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    # Only the migration task gets the owner role's credentials.
+    environment:
+      TALLY_MIGRATION_DATABASE_URL: postgresql+asyncpg://tally_aloft_owner:tally_aloft_owner@postgres:5432/tally_aloft
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     profiles: ["app"]
     build: .
@@ -17,6 +66,11 @@ services:
       TALLY_ENVIRONMENT: development
       TALLY_FORWARDED_ALLOW_IPS: 127.0.0.1
       TALLY_DATABASE_URL: postgresql+asyncpg://tally_aloft_app:tally_aloft_app@postgres:5432/tally_aloft
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       # The image has no curl, so the check uses Python's standard library.
       test:
@@ -31,3 +85,6 @@ services:
       start_interval: 1s
     # Compose's default of 10 seconds would kill the API mid-drain (25 seconds).
     stop_grace_period: 30s
+
+volumes:
+  postgres-data:
