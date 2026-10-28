@@ -147,6 +147,28 @@ async def execute_as_superuser(server: PostgresServer, statement: str) -> None:
         _ = await connection.execute(text(statement))
 
 
+async def truncate_tables(server: PostgresServer, *, lock_timeout: int = 5) -> None:
+    """
+    Empty every table but Alembic's, through an owner connection of its own.
+
+    A test that leaves a transaction open on a table makes this fail with a
+    lock timeout rather than hang the run.
+    """
+    async with connected(server.owner_url) as connection:
+        _ = await connection.execute(text(f"SET lock_timeout = '{lock_timeout}s'"))
+        result = await connection.execute(
+            text(
+                "SELECT format('%I.%I', schemaname, tablename) FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
+            )
+        )
+        tables = ", ".join(result.scalars().all())
+        if tables != "":
+            truncate = f"TRUNCATE {tables} RESTART IDENTITY CASCADE"
+            _ = await connection.execute(text(truncate))
+        await connection.commit()
+
+
 def sqlstate(error: DBAPIError) -> str | None:
     """Return the SQLSTATE that SQLAlchemy's asyncpg adapter puts on the error."""
     code: object = getattr(error.orig, "sqlstate", None)
