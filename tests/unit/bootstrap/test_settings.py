@@ -51,6 +51,7 @@ def _exit_message(error: pytest.ExceptionInfo[SystemExit]) -> str:
 
 def test_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TALLY_ENVIRONMENT", "production")
+    monkeypatch.setenv("TALLY_DATABASE_URL", f"{DATABASE_URL}?ssl=verify-full")
 
     assert Settings().environment is Environment.PRODUCTION
 
@@ -337,6 +338,43 @@ def test_rejects_other_database_urls_without_echoing_them(
     assert _exit_message(error) == f"Invalid settings: {variable} (value_error)"
 
 
+@pytest.mark.parametrize("variable", URL_VARIABLES)
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        DATABASE_URL,
+        f"{DATABASE_URL}?ssl=require",
+        f"{DATABASE_URL}?ssl=verify-ca",
+        f"{DATABASE_URL}?ssl=verify-full&ssl=require",
+    ],
+)
+@pytest.mark.usefixtures("both_models")
+def test_deployed_environments_reject_an_unverified_database_url(
+    monkeypatch: pytest.MonkeyPatch, variable: str, environment: str, value: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", environment)
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(SystemExit) as error:
+        _loader(variable)()
+
+    assert _exit_message(error) == f"Invalid settings: {variable} (value_error)"
+
+
+@pytest.mark.parametrize("variable", URL_VARIABLES)
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.usefixtures("both_models")
+def test_deployed_environments_accept_a_verified_database_url(
+    monkeypatch: pytest.MonkeyPatch, variable: str, environment: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", environment)
+    for name in URL_VARIABLES:
+        monkeypatch.setenv(name, f"{DATABASE_URL}?ssl=verify-full")
+
+    _loader(variable)()
+
+
 @pytest.mark.parametrize("model", [Settings, MigrationSettings])
 @pytest.mark.usefixtures("both_models")
 def test_repr_hides_the_database_url(
@@ -350,26 +388,44 @@ def test_migration_settings_read_only_their_own_variables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     owner_url = "postgresql+asyncpg://owner:owner-password@db.example/tally"
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
     monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", owner_url)
     monkeypatch.setenv("TALLY_MIGRATION_LOCK_TIMEOUT", "2")
 
     settings = MigrationSettings()
 
+    assert settings.environment is Environment.DEVELOPMENT
     assert settings.migration_database_url.get_secret_value() == owner_url
     assert settings.migration_lock_timeout == 2
     assert set(MigrationSettings.model_fields) == {
+        "environment",
         "migration_database_url",
         "migration_lock_timeout",
     }
 
 
-def test_load_migration_settings_names_a_missing_url() -> None:
+def test_load_migration_settings_names_a_missing_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
     with pytest.raises(SystemExit) as error:
         load_migration_settings()
 
     assert _exit_message(error) == (
         "Invalid settings: TALLY_MIGRATION_DATABASE_URL (missing)"
     )
+
+
+def test_load_migration_settings_names_a_missing_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
+
+    with pytest.raises(SystemExit) as error:
+        load_migration_settings()
+
+    assert _exit_message(error) == "Invalid settings: TALLY_ENVIRONMENT (missing)"
 
 
 def test_services_never_read_a_migration_variable() -> None:

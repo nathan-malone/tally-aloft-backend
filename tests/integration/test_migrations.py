@@ -34,6 +34,7 @@ from tests.support.migrations import (
 )
 from tests.support.paths import ROOT
 from tests.support.postgres import LOCK_NOT_AVAILABLE, connected, execute, sqlstate
+from tests.support.pyrefly import pyrefly
 from tests.support.ruff import ruff
 from tests.support.server import without_tally_variables
 
@@ -137,30 +138,58 @@ async def test_a_migration_waiting_on_a_lock_fails_fast(
     assert elapsed < LOCK_DEADLINE_SECONDS
 
 
+# The concurrent index build the README and the design docs describe.
+_BUILD_INDEX_CONCURRENTLY = """
+    with op.get_context().autocommit_block():
+        valid: bool | None = op.get_bind().scalar(
+            sa.text(
+                "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)"
+            ),
+            {"name": "ix_indexed_id"},
+        )
+        if valid is False:
+            op.drop_index("ix_indexed_id", postgresql_concurrently=True)
+        if valid is not True:
+            op.create_index(
+                "ix_indexed_id", "indexed", ["id"], postgresql_concurrently=True
+            )
+"""
+
+
+def _index_revisions(directory: Path, create_indexed: str) -> None:
+    """Write `create_indexed`'s revision, then the concurrent build after it."""
+    write_revision(
+        directory,
+        revision="create_indexed",
+        down_revision=real_head(),
+        upgrade=create_indexed,
+    )
+    write_revision(
+        directory,
+        revision="index_concurrently",
+        down_revision="create_indexed",
+        upgrade=_BUILD_INDEX_CONCURRENTLY,
+    )
+
+
+async def _index_state(database: PostgresDatabase) -> tuple[int, bool]:
+    """Return `ix_indexed_id`'s OID, and whether it is valid."""
+    async with connected(database.owner_url) as connection:
+        result = await connection.execute(
+            text(
+                "SELECT indexrelid::int, indisvalid FROM pg_index "
+                "WHERE indexrelid = to_regclass('ix_indexed_id')"
+            )
+        )
+        oid, valid = result.one()
+        return oid, valid
+
+
 @pytest.mark.container
 async def test_an_index_builds_concurrently_in_an_autocommit_block(
     fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
-    write_revision(
-        tmp_path,
-        revision="create_indexed",
-        down_revision=real_head(),
-        upgrade='op.execute("CREATE TABLE indexed (id int)")',
-    )
-    write_revision(
-        tmp_path,
-        revision="index_concurrently",
-        down_revision="create_indexed",
-        upgrade="""
-            with op.get_context().autocommit_block():
-                op.drop_index(
-                    "ix_indexed_id", if_exists=True, postgresql_concurrently=True
-                )
-                op.create_index(
-                    "ix_indexed_id", "indexed", ["id"], postgresql_concurrently=True
-                )
-        """,
-    )
+    _index_revisions(tmp_path, 'op.execute("CREATE TABLE indexed (id int)")')
     config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
 
     await asyncio.to_thread(upgrade, config)
@@ -170,6 +199,58 @@ async def test_an_index_builds_concurrently_in_an_autocommit_block(
             text("SELECT indexname FROM pg_indexes WHERE tablename = 'indexed'")
         )
         assert result.scalars().all() == ["ix_indexed_id"]
+    assert (await _index_state(fresh_database))[1] is True
+
+
+@pytest.mark.container
+async def test_a_concurrent_build_keeps_a_valid_index(
+    fresh_database: PostgresDatabase, tmp_path: Path
+) -> None:
+    # As though an operator built it ahead of the deploy.
+    _index_revisions(
+        tmp_path,
+        """
+        op.execute("CREATE TABLE indexed (id int)")
+        op.execute("CREATE INDEX ix_indexed_id ON indexed (id)")
+        """,
+    )
+    config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
+    await asyncio.to_thread(upgrade, config, "create_indexed")
+    before = await _index_state(fresh_database)
+
+    await asyncio.to_thread(upgrade, config)
+
+    assert await _index_state(fresh_database) == before
+
+
+@pytest.mark.container
+async def test_a_concurrent_build_replaces_an_invalid_index(
+    fresh_database: PostgresDatabase, tmp_path: Path
+) -> None:
+    _index_revisions(
+        tmp_path,
+        """
+        op.execute("CREATE TABLE indexed (id int)")
+        op.execute("INSERT INTO indexed VALUES (1), (1)")
+        """,
+    )
+    config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
+    await asyncio.to_thread(upgrade, config, "create_indexed")
+    # A failed concurrent build leaves its index behind, INVALID.
+    with pytest.raises(DBAPIError):
+        await execute(
+            fresh_database.owner_url,
+            "CREATE UNIQUE INDEX CONCURRENTLY ix_indexed_id ON indexed (id)",
+            autocommit=True,
+        )
+    invalid_oid, valid = await _index_state(fresh_database)
+    assert valid is False
+
+    await asyncio.to_thread(upgrade, config)
+
+    oid, valid = await _index_state(fresh_database)
+    assert valid is True
+    assert oid != invalid_oid
 
 
 def _convention_tables() -> MetaData:
@@ -227,7 +308,7 @@ def _only_revision(directory: Path) -> tuple[str, str]:
 
 
 @pytest.mark.container
-async def test_a_generated_revision_passes_the_linter_and_formatter(
+async def test_a_generated_revision_passes_the_linter_formatter_and_type_checker(
     fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
     config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
@@ -254,10 +335,12 @@ async def test_a_generated_revision_passes_the_linter_and_formatter(
     filename, source = _only_revision(tmp_path)
     lint = ruff("check", source=source, filename=filename)
     form = ruff("format", "--check", source=source, filename=filename)
+    types = pyrefly(source=source, filename=filename)
 
     assert "op.create_table" in source
     assert lint.returncode == 0, lint.stdout
     assert form.returncode == 0, form.stdout
+    assert types.returncode == 0, types.stdout + types.stderr
 
 
 def test_upgrade_without_the_owner_url_names_the_variable() -> None:

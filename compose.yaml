@@ -51,6 +51,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     # Only the migration task gets the owner role's credentials.
     environment:
+      TALLY_ENVIRONMENT: development
       TALLY_MIGRATION_DATABASE_URL: postgresql+asyncpg://tally_aloft_owner:tally_aloft_owner@postgres:5432/tally_aloft
     depends_on:
       postgres:

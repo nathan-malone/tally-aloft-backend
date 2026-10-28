@@ -6,7 +6,13 @@ from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from typing import Annotated, override
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -42,6 +48,11 @@ _NOT_A_DATABASE_URL = (
     "must be a postgresql+asyncpg://user:password@host:port/database URL, with "
     "reserved characters in the user and password percent-encoded"
 )
+# asyncpg's `require` encrypts without checking the server, and `verify-ca`
+# checks the certificate but not the host name, so deployments need
+# `verify-full`. asyncpg reads the CA bundle from PGSSLROOTCERT.
+_VERIFIED_SSL = "verify-full"
+_NOT_VERIFIED = "must end in ?ssl=verify-full in staging and production"
 # For profiles and tests that never connect. Port 9 on localhost refuses
 # connections, so a stray one fails at once instead of reaching a developer's
 # database.
@@ -55,6 +66,10 @@ class Environment(StrEnum):
     TEST = "test"
     STAGING = "staging"
     PRODUCTION = "production"
+
+
+# The deployments whose database connections must verify the server.
+_DEPLOYED = frozenset({Environment.STAGING, Environment.PRODUCTION})
 
 
 class Settings(BaseSettings):
@@ -96,9 +111,9 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def _parse_database_url(cls, value: SecretStr) -> SecretStr:
-        """Accept only a SQLAlchemy URL for asyncpg."""
-        return _check_database_url(value)
+    def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
+        return _check_database_url(value, info.data.get("environment"))
 
     @field_validator("forwarded_allow_ips", mode="before")
     @classmethod
@@ -168,7 +183,7 @@ class MigrationSettings(BaseSettings):
     The migration task's configuration, read by Alembic's `env.py` only.
 
     It holds the owner role's credentials, so the services never read it, and
-    `Settings` has no field for any of its variables.
+    `Settings` has no field for any of its `TALLY_MIGRATION_` variables.
     """
 
     model_config = SettingsConfigDict(
@@ -177,20 +192,24 @@ class MigrationSettings(BaseSettings):
         frozen=True,
     )
 
+    # Decides whether the owner's connection must verify the server.
+    environment: Environment
     # The owner role's connection, which runs the DDL and makes every grant.
     migration_database_url: SecretStr
     migration_lock_timeout: Annotated[int, Field(ge=1)] = 5
 
     @field_validator("migration_database_url")
     @classmethod
-    def _parse_database_url(cls, value: SecretStr) -> SecretStr:
-        """Accept only a SQLAlchemy URL for asyncpg."""
-        return _check_database_url(value)
+    def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
+        return _check_database_url(value, info.data.get("environment"))
 
     @classmethod
     def for_tests(cls, **values: object) -> MigrationSettings:
         """Return migration settings built only from `values`, never the environment."""
-        return _ExplicitMigrationSettings.model_validate(values)
+        return _ExplicitMigrationSettings.model_validate(
+            {"environment": Environment.TEST, **values}
+        )
 
 
 class _FromValuesOnly(BaseSettings):
@@ -231,12 +250,14 @@ class _ExplicitMigrationSettings(_FromValuesOnly, MigrationSettings):
     model_config = SettingsConfigDict(extra="forbid")
 
 
-def _check_database_url(value: SecretStr) -> SecretStr:
+def _check_database_url(value: SecretStr, environment: object) -> SecretStr:
     """
     Return `value` if it is a SQLAlchemy URL for asyncpg, else raise.
 
     SQLAlchemy's own parser decides, so the engine accepts exactly what settings
     accepted. Its errors quote the URL, password and all, so none is chained.
+    In a deployed `environment`, the URL must also verify the server. An
+    invalid environment is reported on its own, so the URL isn't held to it.
     """
     try:
         url = make_url(value.get_secret_value())
@@ -248,6 +269,8 @@ def _check_database_url(value: SecretStr) -> SecretStr:
         or url.database in {None, ""}
     ):
         raise ValueError(_NOT_A_DATABASE_URL)
+    if environment in _DEPLOYED and url.query.get("ssl") != _VERIFIED_SSL:
+        raise ValueError(_NOT_VERIFIED)
     return value
 
 

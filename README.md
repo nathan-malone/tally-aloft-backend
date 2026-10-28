@@ -69,15 +69,24 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
   ```python
   def upgrade() -> None:
       with op.get_context().autocommit_block():
-          op.drop_index(
-              "ix_flights_pilot_id", if_exists=True, postgresql_concurrently=True
+          valid: bool | None = op.get_bind().scalar(
+              sa.text(
+                  "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(:name)"
+              ),
+              {"name": "ix_flights_pilot_id"},
           )
-          op.create_index(
-              "ix_flights_pilot_id", "flights", ["pilot_id"], postgresql_concurrently=True
-          )
+          if valid is False:
+              op.drop_index("ix_flights_pilot_id", postgresql_concurrently=True)
+          if valid is not True:
+              op.create_index(
+                  "ix_flights_pilot_id",
+                  "flights",
+                  ["pilot_id"],
+                  postgresql_concurrently=True,
+              )
   ```
 
-  A concurrent build that fails, on the lock timeout for example, leaves an `INVALID` index behind; dropping it first lets a rerun start clean. Each revision runs in its own transaction, because the block commits everything before it.
+  A concurrent build that fails, on the lock timeout for example, leaves an `INVALID` index behind, so a rerun drops it and builds again. A valid index of that name is kept, not rebuilt, such as one an operator built ahead of the deploy, or one whose build committed before the task stopped. Only the name is checked, so an index built ahead of a deploy must match the revision's definition exactly. Each revision runs in its own transaction, because the block commits everything before it.
 - **New revisions.** Change the table models in `src/tally_aloft/adapters/outbound/postgres/tables/`, then run `make migrations.create NAME="add flights"` against a database at the latest migration. Alembic compares the two, writes `migrations/versions/<date>_<revision>_add_flights.py` from `migrations/script.py.mako`, and Ruff fixes and formats it. Read it before committing: autogenerate misses some changes, such as renames, and it never writes grants.
 
 ## Checks
@@ -94,14 +103,14 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 
 | Variable | Format | Default | Required |
 | --- | --- | --- | --- |
-| `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
+| `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production`. The migration command reads it too. | none | yes |
 | `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |
 | `TALLY_CORS_ORIGINS` | Comma-separated browser origins that CORS allows, such as `https://tallyaloft.app`. Each is exactly a lowercase `scheme://host[:port]`, with no path and no default port. `*` is rejected. | none | no |
-| `TALLY_DATABASE_URL` | The application role's database, as a SQLAlchemy URL for asyncpg: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters in the user and password percent-encoded. Secret. | none | yes |
+| `TALLY_DATABASE_URL` | The application role's database, as a SQLAlchemy URL for asyncpg: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters in the user and password percent-encoded. In `staging` and `production` it must end in `?ssl=verify-full`, and `PGSSLROOTCERT` names the server's CA bundle. Secret. | none | yes |
 | `TALLY_DATABASE_POOL_SIZE` | Connections each process keeps in its pool, at least 1. | `5` | no |
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |
 | `TALLY_DATABASE_STATEMENT_TIMEOUT` | Seconds a statement may run before Postgres cancels it, at least 1. | `30` | no |
-| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in the same format, for migrations only. Secret. | none | for migrations |
+| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in the same format and with the same `ssl` rule, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 
 Only the migration command reads the `TALLY_MIGRATION_*` variables, so the services never get the owner role's credentials. On the host they share `.env` with the rest, for convenience; in Compose's `app` profile and in AWS only the migration task gets them.

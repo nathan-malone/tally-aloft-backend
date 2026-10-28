@@ -3,11 +3,14 @@ import pytest
 from tally_aloft.bootstrap.settings import MigrationSettings, Settings, variable_name
 from tests.support.paths import ROOT
 
-VARIABLES = [
-    variable_name(field)
-    for model in (Settings, MigrationSettings)
-    for field in model.model_fields
-]
+# Each variable once, though both models read TALLY_ENVIRONMENT.
+VARIABLES = list(
+    dict.fromkeys(
+        variable_name(field)
+        for model in (Settings, MigrationSettings)
+        for field in model.model_fields
+    )
+)
 
 
 @pytest.mark.parametrize("variable", VARIABLES)
