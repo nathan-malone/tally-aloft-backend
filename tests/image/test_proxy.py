@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.support.containers import unique_name, wait_for_log
+from tests.support.server import REQUIRED_SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,10 +101,7 @@ def test_forwarded_for_is_trusted_only_from_the_configured_network(
         probe_command,
         inside,
         API_INSIDE,
-        environment={
-            "TALLY_ENVIRONMENT": "test",
-            "TALLY_FORWARDED_ALLOW_IPS": "10.0.0.0/8",
-        },
+        environment={**REQUIRED_SETTINGS, "TALLY_FORWARDED_ALLOW_IPS": "10.0.0.0/8"},
         mounts=[tests_mount],
     )
     outside.connect(api, ipv4_address=API_OUTSIDE)

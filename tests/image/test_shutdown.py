@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from tests.support.containers import unique_name, wait_for_log
+from tests.support.server import REQUIRED_SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,7 +40,7 @@ def start_api(
             command,
             detach=True,
             name=unique_name("api"),
-            environment={"TALLY_ENVIRONMENT": "test"},
+            environment=REQUIRED_SETTINGS,
             mounts=[tests_mount],
             ports={"8000/tcp": ("127.0.0.1", 0)},  # Port 0: Docker picks a free one.
         )

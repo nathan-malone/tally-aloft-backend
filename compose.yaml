@@ -16,6 +16,7 @@ services:
     environment:
       TALLY_ENVIRONMENT: development
       TALLY_FORWARDED_ALLOW_IPS: 127.0.0.1
+      TALLY_DATABASE_URL: postgresql+asyncpg://tally_aloft_app:tally_aloft_app@postgres:5432/tally_aloft
     healthcheck:
       # The image has no curl, so the check uses Python's standard library.
       test:
