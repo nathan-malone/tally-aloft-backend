@@ -106,11 +106,11 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production`. The migration command reads it too. | none | yes |
 | `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |
 | `TALLY_CORS_ORIGINS` | Comma-separated browser origins that CORS allows, such as `https://tallyaloft.app`. Each is exactly a lowercase `scheme://host[:port]`, with no path and no default port. `*` is rejected. | none | no |
-| `TALLY_DATABASE_URL` | The application role's database, as a SQLAlchemy URL for asyncpg: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters in the user and password percent-encoded. In `staging` and `production` it must end in `?ssl=verify-full`, and `PGSSLROOTCERT` names the server's CA bundle. Secret. | none | yes |
+| `TALLY_DATABASE_URL` | The application role's database, as a SQLAlchemy URL for asyncpg: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters in the user and password percent-encoded. In `staging` and `production` it must end in `?ssl=verify-full`, with no `host` parameter, and `PGSSLROOTCERT` names the server's CA bundle. Secret. | none | yes |
 | `TALLY_DATABASE_POOL_SIZE` | Connections each process keeps in its pool, at least 1. | `5` | no |
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |
 | `TALLY_DATABASE_STATEMENT_TIMEOUT` | Seconds a statement may run before Postgres cancels it, at least 1. | `30` | no |
-| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in the same format and with the same `ssl` rule, for migrations only. Secret. | none | for migrations |
+| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in the same format and with the same `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 
 Only the migration command reads the `TALLY_MIGRATION_*` variables, so the services never get the owner role's credentials. On the host they share `.env` with the rest, for convenience; in Compose's `app` profile and in AWS only the migration task gets them.

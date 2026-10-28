@@ -347,6 +347,11 @@ def test_rejects_other_database_urls_without_echoing_them(
         f"{DATABASE_URL}?ssl=require",
         f"{DATABASE_URL}?ssl=verify-ca",
         f"{DATABASE_URL}?ssl=verify-full&ssl=require",
+        # A host parameter replaces the URL's host, and asyncpg connects to a
+        # path, as a Unix socket, without TLS.
+        f"{DATABASE_URL}?ssl=verify-full&host=/var/run/postgresql",
+        f"{DATABASE_URL}?ssl=verify-full&host=/tmp&host=/var/run/postgresql",
+        f"{DATABASE_URL}?ssl=verify-full&host=other.example",
     ],
 )
 @pytest.mark.usefixtures("both_models")

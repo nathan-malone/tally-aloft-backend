@@ -53,6 +53,9 @@ _NOT_A_DATABASE_URL = (
 # `verify-full`. asyncpg reads the CA bundle from PGSSLROOTCERT.
 _VERIFIED_SSL = "verify-full"
 _NOT_VERIFIED = "must end in ?ssl=verify-full in staging and production"
+# A `host` parameter replaces the URL's host, and asyncpg reads one starting
+# with `/` as a Unix socket, which it connects to without TLS.
+_HOST_PARAMETER = "must not have a host parameter in staging and production"
 # For profiles and tests that never connect. Port 9 on localhost refuses
 # connections, so a stray one fails at once instead of reaching a developer's
 # database.
@@ -256,8 +259,9 @@ def _check_database_url(value: SecretStr, environment: object) -> SecretStr:
 
     SQLAlchemy's own parser decides, so the engine accepts exactly what settings
     accepted. Its errors quote the URL, password and all, so none is chained.
-    In a deployed `environment`, the URL must also verify the server. An
-    invalid environment is reported on its own, so the URL isn't held to it.
+    In a deployed `environment`, the URL must also verify the server, and
+    connect to the host it names before its path. An invalid environment is
+    reported on its own, so the URL isn't held to it.
     """
     try:
         url = make_url(value.get_secret_value())
@@ -271,6 +275,8 @@ def _check_database_url(value: SecretStr, environment: object) -> SecretStr:
         raise ValueError(_NOT_A_DATABASE_URL)
     if environment in _DEPLOYED and url.query.get("ssl") != _VERIFIED_SSL:
         raise ValueError(_NOT_VERIFIED)
+    if environment in _DEPLOYED and "host" in url.query:
+        raise ValueError(_HOST_PARAMETER)
     return value
 
 
