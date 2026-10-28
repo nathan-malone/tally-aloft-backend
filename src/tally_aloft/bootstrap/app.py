@@ -16,6 +16,7 @@ from tally_aloft.adapters.inbound.http.errors import (
 )
 from tally_aloft.adapters.inbound.http.operation_ids import operation_id
 from tally_aloft.bootstrap.container import Overrides, build_use_cases
+from tally_aloft.bootstrap.resources import open_resources
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -43,15 +44,19 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
     """
     Build the API app with its routers and middleware.
 
-    It opens no connection and builds no adapter. The lifespan builds the
-    `UseCases` registry and puts it on `app.state.use_cases`.
+    It opens no connection and builds no adapter. The lifespan opens the shared
+    resources, builds the `UseCases` registry on them, puts it on
+    `app.state.use_cases`, and closes the resources on shutdown.
     """
     resolved_overrides = Overrides() if overrides is None else overrides
 
     @asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncGenerator[None]:
-        api.state.use_cases = build_use_cases(settings, resolved_overrides)
-        yield
+        async with open_resources(settings) as resources:
+            api.state.use_cases = build_use_cases(
+                settings, resources, resolved_overrides
+            )
+            yield
 
     app = FastAPI(
         title=_TITLE,
