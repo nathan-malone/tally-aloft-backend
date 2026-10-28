@@ -1,0 +1,32 @@
+line-length = 88
+src = ["src", "tests"]
+
+[lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Conflicts with the formatter, which decides trailing commas.
+    "CPY001", # The project has no copyright header policy.
+    "D100",   # Public modules need no docstring (human rule).
+    "D104",   # Public packages need no docstring; a package's __init__ is a module.
+    "D203",   # Conflicts with D211, which wins: no blank line before a class docstring.
+    "D212",   # Conflicts with D213, which wins: the summary starts on the second line.
+]
+
+[lint.per-file-ignores]
+"scripts/**" = [
+    "INP001", # Scripts run as files, not as modules of a package.
+]
+"tests/**" = [
+    "D",       # Tests need no docstrings (human rule).
+    "PLR2004", # Tests compare against literal expected values.
+    "S101",    # pytest checks with assert.
+    "S603",    # Tests run the project's tools as subprocesses with fixed arguments.
+]
+
+[lint.flake8-type-checking]
+# Pydantic evaluates these classes' annotations at runtime, so their imports
+# must stay outside TYPE_CHECKING blocks.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+]

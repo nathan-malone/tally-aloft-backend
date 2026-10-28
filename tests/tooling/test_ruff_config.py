@@ -3,11 +3,11 @@ from typing import cast
 
 from ruff import find_ruff_bin
 
-from tests.support.paths import PYPROJECT, ROOT, pyproject
+from tests.support.paths import ROOT, RUFF_TOML, read_toml
 
 
 def _ruff_config() -> dict[str, object]:
-    return cast("dict[str, dict[str, object]]", pyproject()["tool"])["ruff"]
+    return read_toml(RUFF_TOML)
 
 
 def _lint_config() -> dict[str, object]:
@@ -25,12 +25,12 @@ def _ignored_rules() -> list[str]:
 
 
 def _ruff_lint_lines() -> list[str]:
-    """Return the raw lines of every `[tool.ruff.lint…]` table."""
+    """Return the raw lines of every `[lint…]` table."""
     lines: list[str] = []
     in_ruff_lint = False
-    for line in PYPROJECT.read_text().splitlines():
+    for line in RUFF_TOML.read_text().splitlines():
         if line.startswith("["):
-            in_ruff_lint = line.startswith("[tool.ruff.lint")
+            in_ruff_lint = line.startswith("[lint")
         elif in_ruff_lint:
             lines.append(line)
     return lines

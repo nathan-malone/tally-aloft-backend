@@ -1,0 +1,71 @@
+preset = "strict"
+check-unannotated-defs = true
+python-version = "3.14"
+project-includes = ["src", "tests", "scripts"]
+search-path = [".", "src"]
+
+# Pyrefly 1.4's off-by-default error kinds that the strict preset leaves off
+# are all errors here, and so are the kinds that default to a warning, so the
+# check fails on them. A kind left off or lowered says why on its line.
+[errors]
+# Off by default:
+empty-body = "error"
+explicit-any = "error"
+implicit-abstract-class = "error"
+implicit-bool = "error"
+implicit-reexport = "error"
+implicitly-defined-attribute = "error"
+incompatible-comparison = "error"
+invalid-abstract-method = "error"
+invalid-cast = "error"
+missing-source = "error"
+missing-super-call = "error"
+no-any-return = "error"
+non-exhaustive-match-open-type = "error"
+not-required-key-access = "error"
+pytorch-efficiency-lints = "error"
+string-as-iterable = "error"
+unannotated-return = "error"
+uninitialized-instance-variable = "error"
+unknown-argument-type = "error"
+unknown-attribute-access = "error"
+unknown-attribute-type = "error"
+unknown-return-type = "error"
+unknown-variable-type = "error"
+unsupported-dynamic-base = "error"
+untyped-class-decorator = "error"
+untyped-function-decorator = "error"
+untyped-namedtuple = "error"
+unused-call-result = "error"
+unused-type-ignore = "error"
+# Warnings by default:
+attribute-assign-on-never = "error"
+coverage-missing = "error"
+coverage-partial = "error"
+deprecated = "error"
+division-by-zero = "error"
+implicit-import = "error"
+invalid-decorator = "error"
+misplaced-ignore = "error"
+missing-attribute-patch-target = "error"
+name-mismatch = "error"
+non-convergent-recursion = "error"
+non-exhaustive-match = "error"
+redundant-cast = "error"
+redundant-condition = "error"
+unnecessary-comparison = "error"
+unnecessary-type-conversion = "error"
+unreachable = "error"
+unreachable-except-clause = "error"
+unreachable-match-case = "error"
+unresolvable-dunder-all = "error"
+untyped-import = "error"
+useless-overload-body = "error"
+variance-mismatch = "error"
+
+# Tests call for side effects whose results don't matter: `pytest.raises`
+# blocks, `Path.write_text()`, `subprocess.run(check=True)`, `Task.cancel()`.
+[[sub-config]]
+matches = "tests/**"
+[sub-config.errors]
+unused-call-result = false  # Side-effect calls are the test idiom.

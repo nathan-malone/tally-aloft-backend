@@ -31,6 +31,9 @@ _NOT_AN_ORIGIN = (
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 # A host label a browser parses as a number, which makes the host IPv4.
 _NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
+# The URL Standard's forbidden domain code points. A browser can't parse a host
+# with one, and decodes a percent-encoded one, so it never sends either form.
+_FORBIDDEN_DOMAIN_CHARACTER = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 
 
 class Environment(StrEnum):
@@ -192,10 +195,13 @@ def _browser_host(hostname: str) -> str:
     A browser writes an IPv6 address in brackets, compressed, with no zone and
     no dotted IPv4 part, and reads a host whose last label is a number as an
     IPv4 address, which it writes as four decimal numbers: `127.1` is sent as
-    `127.0.0.1`. Other hosts are kept as they are.
+    `127.0.0.1`. A host with a forbidden or percent-encoded character can't be
+    written. Other hosts are kept as they are.
     """
     if ":" in hostname:
         return _browser_ipv6_host(hostname)
+    if _FORBIDDEN_DOMAIN_CHARACTER.search(hostname) is not None:
+        return ""
     last_label = hostname.removesuffix(".").rpartition(".")[2]
     if _NUMBER_LABEL.fullmatch(last_label) is not None:
         try:

@@ -2,7 +2,7 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from tests.support.paths import PYPROJECT
+from tests.support.paths import PYREFLY_TOML
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,7 +32,7 @@ def _pyrefly(tmp_path: Path, parameters: str) -> subprocess.CompletedProcess[str
             "pyrefly",
             "check",
             "--config",
-            str(PYPROJECT),
+            str(PYREFLY_TOML),
             str(probe),
         ],
         capture_output=True,

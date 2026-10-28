@@ -16,7 +16,7 @@ Every developer and CI command lives in the `Makefile`. Add or change a command 
 
 ## Conventions
 
-- Ruff runs every rule. Each ignore in `pyproject.toml` has a reason comment, and the global list stays at 10 or fewer.
+- Ruff runs every rule. Each ignore in `ruff.toml` has a reason comment, and the global list stays at 10 or fewer.
 - Pyrefly runs the strict preset with every optional error kind on. An inline suppression is `# pyrefly: ignore[<kind>]  # <reason>`, and `src/` holds 10 at most.
 - Add each newly adopted framework or vendor package to Import Linter's forbidden list.
 - `make slop.check` fails on any aislop finding. Fix the code rather than suppress the finding. When a finding is wrong, suppress that one rule on that line, with the reason after `--`: `# aislop-ignore-next-line <rule-id> -- <reason>`.
