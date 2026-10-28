@@ -14,5 +14,11 @@ class DependencyCheck(Protocol):
         ...
 
     async def check(self) -> None:
-        """Return when the dependency works, and raise when it doesn't."""
+        """
+        Return when the dependency works, and raise when it doesn't.
+
+        Readiness cancels a check that runs past its deadline and doesn't wait
+        for it to stop, so let cancellation through promptly: a check that
+        never ends leaves a task behind on every readiness call.
+        """
         ...
