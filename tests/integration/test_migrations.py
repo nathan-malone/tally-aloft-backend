@@ -10,7 +10,6 @@ from alembic import command
 from alembic.autogenerate import produce_migrations
 from alembic.operations.ops import CreateTableOp
 from alembic.runtime.migration import MigrationContext
-from ruff import find_ruff_bin
 from sqlalchemy import (
     Column,
     Constraint,
@@ -27,6 +26,7 @@ from sqlalchemy.exc import DBAPIError
 from tally_aloft.adapters.outbound.postgres.tables import NAMING_CONVENTION, Base
 from tests.support.migrations import (
     alembic_config,
+    current_revision,
     downgrade,
     real_head,
     upgrade,
@@ -34,6 +34,7 @@ from tests.support.migrations import (
 )
 from tests.support.paths import ROOT
 from tests.support.postgres import LOCK_NOT_AVAILABLE, connected, execute, sqlstate
+from tests.support.ruff import ruff
 from tests.support.server import without_tally_variables
 
 if TYPE_CHECKING:
@@ -42,49 +43,38 @@ if TYPE_CHECKING:
     from alembic.operations.ops import MigrationScript
     from sqlalchemy.engine import Connection
 
-    from tests.support.postgres import PostgresServer
+    from tests.support.postgres import PostgresDatabase
 
 # AC 7: a migration stuck on a lock fails within this, with a 1-second timeout.
 LOCK_DEADLINE_SECONDS = 3
 
 
-async def _current_revision(server: PostgresServer) -> str | None:
-    async with connected(server.owner_url) as connection:
-        exists = await connection.execute(text("SELECT to_regclass('alembic_version')"))
-        if exists.scalar_one() is None:
-            return None
-        result = await connection.execute(
-            text("SELECT version_num FROM alembic_version")
-        )
-        return result.scalar_one_or_none()
-
-
 @pytest.mark.container
-async def test_upgrade_reaches_the_head(fresh_database: PostgresServer) -> None:
+async def test_upgrade_reaches_the_head(fresh_database: PostgresDatabase) -> None:
     await asyncio.to_thread(upgrade, alembic_config(fresh_database.owner_url))
 
-    assert await _current_revision(fresh_database) == real_head()
+    assert await current_revision(fresh_database) == real_head()
 
 
 @pytest.mark.container
 async def test_downgrade_to_base_then_upgrade_again(
-    fresh_database: PostgresServer,
+    fresh_database: PostgresDatabase,
 ) -> None:
     config = alembic_config(fresh_database.owner_url)
     await asyncio.to_thread(upgrade, config)
 
     await asyncio.to_thread(downgrade, config, "base")
-    assert await _current_revision(fresh_database) is None
+    assert await current_revision(fresh_database) is None
     await asyncio.to_thread(upgrade, config)
 
-    assert await _current_revision(fresh_database) == real_head()
+    assert await current_revision(fresh_database) == real_head()
 
 
 @pytest.mark.container
 async def test_migrations_set_the_lock_timeout_and_no_statement_timeout(
-    fresh_database: PostgresServer, tmp_path: Path
+    fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
-    database = fresh_database.database
+    database = fresh_database.name
     await execute(
         fresh_database.owner_url,
         f"ALTER DATABASE \"{database}\" SET statement_timeout = '1s'",
@@ -110,13 +100,13 @@ async def test_migrations_set_the_lock_timeout_and_no_statement_timeout(
 
     await asyncio.to_thread(upgrade, config)
 
-    assert await _current_revision(fresh_database) == "timeouts"
+    assert await current_revision(fresh_database) == "timeouts"
 
 
 @pytest.mark.container
 @pytest.mark.parametrize("in_autocommit_block", [False, True])
 async def test_a_migration_waiting_on_a_lock_fails_fast(
-    fresh_database: PostgresServer, tmp_path: Path, *, in_autocommit_block: bool
+    fresh_database: PostgresDatabase, tmp_path: Path, *, in_autocommit_block: bool
 ) -> None:
     write_revision(
         tmp_path,
@@ -149,7 +139,7 @@ async def test_a_migration_waiting_on_a_lock_fails_fast(
 
 @pytest.mark.container
 async def test_an_index_builds_concurrently_in_an_autocommit_block(
-    fresh_database: PostgresServer, tmp_path: Path
+    fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
     write_revision(
         tmp_path,
@@ -163,6 +153,9 @@ async def test_an_index_builds_concurrently_in_an_autocommit_block(
         down_revision="create_indexed",
         upgrade="""
             with op.get_context().autocommit_block():
+                op.drop_index(
+                    "ix_indexed_id", if_exists=True, postgresql_concurrently=True
+                )
                 op.create_index(
                     "ix_indexed_id", "indexed", ["id"], postgresql_concurrently=True
                 )
@@ -199,7 +192,7 @@ def _convention_tables() -> MetaData:
 
 @pytest.mark.container
 async def test_autogenerate_names_constraints_by_the_convention(
-    fresh_database: PostgresServer,
+    fresh_database: PostgresDatabase,
 ) -> None:
     await asyncio.to_thread(upgrade, alembic_config(fresh_database.owner_url))
     metadata = _convention_tables()
@@ -233,20 +226,9 @@ def _only_revision(directory: Path) -> tuple[str, str]:
     return f"migrations/versions/{revision.name}", revision.read_text()
 
 
-def _ruff(*arguments: str, source: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [find_ruff_bin(), *arguments, "-"],
-        input=source,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
-    )
-
-
 @pytest.mark.container
 async def test_a_generated_revision_passes_the_linter_and_formatter(
-    fresh_database: PostgresServer, tmp_path: Path
+    fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
     config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
     await asyncio.to_thread(upgrade, config)
@@ -270,8 +252,8 @@ async def test_a_generated_revision_passes_the_linter_and_formatter(
         Base.metadata.remove(table)
 
     filename, source = _only_revision(tmp_path)
-    lint = _ruff("check", "--no-cache", "--stdin-filename", filename, source=source)
-    form = _ruff("format", "--check", "--stdin-filename", filename, source=source)
+    lint = ruff("check", source=source, filename=filename)
+    form = ruff("format", "--check", source=source, filename=filename)
 
     assert "op.create_table" in source
     assert lint.returncode == 0, lint.stdout

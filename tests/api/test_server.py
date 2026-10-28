@@ -29,6 +29,7 @@ def test_invalid_settings_stop_the_api_before_it_serves(
     variable: str, value: str | None
 ) -> None:
     env = {**without_tally_variables(os.environ), **REQUIRED_SETTINGS}
+    # A second, missing variable shows the line names every failure, once each.
     del env["TALLY_ENVIRONMENT"]
     if value is None:
         del env[variable]

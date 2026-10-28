@@ -69,12 +69,15 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
   ```python
   def upgrade() -> None:
       with op.get_context().autocommit_block():
+          op.drop_index(
+              "ix_flights_pilot_id", if_exists=True, postgresql_concurrently=True
+          )
           op.create_index(
               "ix_flights_pilot_id", "flights", ["pilot_id"], postgresql_concurrently=True
           )
   ```
 
-  Each revision runs in its own transaction, because the block commits everything before it.
+  A concurrent build that fails, on the lock timeout for example, leaves an `INVALID` index behind; dropping it first lets a rerun start clean. Each revision runs in its own transaction, because the block commits everything before it.
 - **New revisions.** Change the table models in `src/tally_aloft/adapters/outbound/postgres/tables/`, then run `make migrations.create NAME="add flights"` against a database at the latest migration. Alembic compares the two, writes `migrations/versions/<date>_<revision>_add_flights.py` from `migrations/script.py.mako`, and Ruff fixes and formats it. Read it before committing: autogenerate misses some changes, such as renames, and it never writes grants.
 
 ## Checks

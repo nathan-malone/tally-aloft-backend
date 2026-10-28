@@ -1,5 +1,6 @@
 import os
 from ipaddress import IPv4Network, IPv6Network
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +16,9 @@ from tally_aloft.bootstrap.settings import (
     variable_name,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 DATABASE_URL = "postgresql+asyncpg://app:app-password@db.example:5432/tally"
 URL_VARIABLES = ["TALLY_DATABASE_URL", "TALLY_MIGRATION_DATABASE_URL"]
 
@@ -27,11 +31,18 @@ def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TALLY_DATABASE_URL", DATABASE_URL)
 
 
-def _load(variable: str) -> object:
-    """Load the settings model that reads `variable`."""
+@pytest.fixture
+def both_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set every variable both settings models require."""
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
+
+
+def _loader(variable: str) -> Callable[[], object]:
+    """Return the loader of the settings model that reads `variable`."""
     if variable.startswith("TALLY_MIGRATION_"):
-        return MigrationSettings()
-    return Settings()
+        return load_migration_settings
+    return load_settings
 
 
 def _exit_message(error: pytest.ExceptionInfo[SystemExit]) -> str:
@@ -275,15 +286,14 @@ def test_database_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
         ("TALLY_MIGRATION_LOCK_TIMEOUT", "0"),
     ],
 )
+@pytest.mark.usefixtures("both_models")
 def test_rejects_out_of_range_database_numbers(
     monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
-    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
-    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ValidationError):
-        _load(variable)
+    with pytest.raises(SystemExit):
+        _loader(variable)()
 
 
 @pytest.mark.parametrize("variable", URL_VARIABLES)
@@ -295,14 +305,13 @@ def test_rejects_out_of_range_database_numbers(
         "postgresql+asyncpg://app@127.0.0.1/tally?ssl=require",
     ],
 )
+@pytest.mark.usefixtures("both_models")
 def test_accepts_asyncpg_database_urls(
     monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
-    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
-    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv(variable, value)
 
-    _load(variable)
+    _loader(variable)()
 
 
 @pytest.mark.parametrize("variable", URL_VARIABLES)
@@ -317,30 +326,22 @@ def test_accepts_asyncpg_database_urls(
         "postgresql+asyncpg://app@db.example:port/tally",
     ],
 )
+@pytest.mark.usefixtures("both_models")
 def test_rejects_other_database_urls_without_echoing_them(
     monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
-    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
-    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv(variable, value)
-    load = (
-        load_migration_settings
-        if variable.startswith("TALLY_MIGRATION_")
-        else load_settings
-    )
-
     with pytest.raises(SystemExit) as error:
-        load()
+        _loader(variable)()
 
     assert _exit_message(error) == f"Invalid settings: {variable} (value_error)"
 
 
 @pytest.mark.parametrize("model", [Settings, MigrationSettings])
+@pytest.mark.usefixtures("both_models")
 def test_repr_hides_the_database_url(
-    monkeypatch: pytest.MonkeyPatch, model: type[Settings | MigrationSettings]
+    model: type[Settings | MigrationSettings],
 ) -> None:
-    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
-    monkeypatch.setenv("TALLY_MIGRATION_DATABASE_URL", DATABASE_URL)
 
     assert "app-password" not in repr(model())
 

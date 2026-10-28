@@ -6,7 +6,7 @@ import pytest
 
 from tests.support.migrations import alembic_config, upgrade
 from tests.support.postgres import (
-    PostgresServer,
+    PostgresDatabase,
     running_postgres,
     temporary_database,
     truncate_tables,
@@ -18,10 +18,12 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(scope="session")
-def postgres_server() -> Iterator[PostgresServer]:
+def postgres_server() -> Iterator[PostgresDatabase]:
     """
     Start one Postgres per test worker, on first use only, and migrate it.
 
+    It yields the shared database. Use it only to read, or for statements that
+    fail: nothing empties it, so a test that writes takes `database` instead.
     The test-only tables are created after the migrations, as the owner. Tests
     that use it need Docker, so they're marked `container`.
     """
@@ -35,16 +37,18 @@ def postgres_server() -> Iterator[PostgresServer]:
 
 
 @pytest.fixture
-async def database(postgres_server: PostgresServer) -> AsyncGenerator[PostgresServer]:
-    """The shared database, with every table emptied after the test."""
+async def database(
+    postgres_server: PostgresDatabase,
+) -> AsyncGenerator[PostgresDatabase]:
+    """The shared database, for tests that write: every table is emptied after."""
     yield postgres_server
     await truncate_tables(postgres_server)
 
 
 @pytest.fixture
 async def fresh_database(
-    postgres_server: PostgresServer,
-) -> AsyncGenerator[PostgresServer]:
+    postgres_server: PostgresDatabase,
+) -> AsyncGenerator[PostgresDatabase]:
     """An empty database owned by the owner role, with no migrations applied."""
-    async with temporary_database(postgres_server) as server:
-        yield server
+    async with temporary_database(postgres_server) as fresh:
+        yield fresh

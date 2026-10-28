@@ -14,7 +14,7 @@ from tests.support.postgres import QUERY_CANCELED, sqlstate
 from tests.support.server import silent_server
 
 if TYPE_CHECKING:
-    from tests.support.postgres import PostgresServer
+    from tests.support.postgres import PostgresDatabase
 
 MARKER = "secret-marker"
 MISSING_TABLE_QUERY = text("SELECT * FROM missing WHERE x = :marker")
@@ -22,7 +22,7 @@ MISSING_TABLE_QUERY = text("SELECT * FROM missing WHERE x = :marker")
 
 @pytest.mark.container
 async def test_errors_hide_statement_parameters(
-    postgres_server: PostgresServer,
+    postgres_server: PostgresDatabase,
 ) -> None:
     settings = Settings.for_tests(database_url=postgres_server.app_url)
 
@@ -37,7 +37,7 @@ async def test_errors_hide_statement_parameters(
 
 @pytest.mark.container
 async def test_an_engine_without_hidden_parameters_would_show_them(
-    postgres_server: PostgresServer,
+    postgres_server: PostgresDatabase,
 ) -> None:
     # The control for the test above: the marker does reach the message here.
     engine = create_async_engine(postgres_server.app_url)
@@ -53,7 +53,7 @@ async def test_an_engine_without_hidden_parameters_would_show_them(
 
 @pytest.mark.container
 async def test_statement_timeout_cancels_a_long_statement(
-    postgres_server: PostgresServer,
+    postgres_server: PostgresDatabase,
 ) -> None:
     settings = Settings.for_tests(
         database_url=postgres_server.app_url, database_statement_timeout=1
@@ -69,7 +69,7 @@ async def test_statement_timeout_cancels_a_long_statement(
 
 @pytest.mark.container
 async def test_statement_timeout_defaults_to_30_seconds(
-    postgres_server: PostgresServer,
+    postgres_server: PostgresDatabase,
 ) -> None:
     settings = Settings.for_tests(database_url=postgres_server.app_url)
 

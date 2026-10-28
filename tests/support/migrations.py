@@ -13,12 +13,16 @@ from typing import TYPE_CHECKING
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy import text
 
 from tally_aloft.bootstrap.settings import MigrationSettings
 from tests.support.paths import ROOT
+from tests.support.postgres import connected
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from tests.support.postgres import PostgresDatabase
 
 ALEMBIC_INI = ROOT / "alembic.ini"
 VERSIONS = ROOT / "migrations" / "versions"
@@ -68,6 +72,18 @@ def real_head() -> str:
     head = ScriptDirectory.from_config(Config(ALEMBIC_INI)).get_current_head()
     assert head is not None
     return head
+
+
+async def current_revision(database: PostgresDatabase) -> str | None:
+    """Return the database's migration revision, or None before the first one."""
+    async with connected(database.owner_url) as connection:
+        exists = await connection.execute(text("SELECT to_regclass('alembic_version')"))
+        if exists.scalar_one() is None:
+            return None
+        result = await connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        )
+        return result.scalar_one_or_none()
 
 
 def upgrade(config: Config, revision: str = "head") -> None:

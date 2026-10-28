@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from tally_aloft.adapters.outbound.postgres.unit_of_work import (
     PostgresUnitOfWork,
@@ -17,23 +18,35 @@ from tests.support.tables import test_rows
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
-    from tests.support.postgres import PostgresServer
+    from tests.support.postgres import PostgresDatabase
 
 # Pyrefly fails here if the adapter drifts from the Protocol use cases hold.
 _unit_of_work: SharedUnitOfWork = PostgresUnitOfWork(async_sessionmaker())
 
 
 @pytest.fixture
-async def make_unit_of_work(
-    database: PostgresServer,
-) -> AsyncGenerator[Callable[[], PostgresUnitOfWork]]:
+async def engine(database: PostgresDatabase) -> AsyncGenerator[AsyncEngine]:
     settings = Settings.for_tests(database_url=database.app_url)
     async with open_resources(settings) as resources:
-        yield unit_of_work_factory(resources.engine)
+        yield resources.engine
 
 
-async def _committed_values(database: PostgresServer) -> list[str]:
+@pytest.fixture
+def make_unit_of_work(engine: AsyncEngine) -> Callable[[], PostgresUnitOfWork]:
+    return unit_of_work_factory(engine)
+
+
+def _checked_out(engine: AsyncEngine) -> int:
+    """Return how many of the engine's pooled connections are in use."""
+    pool = engine.pool
+    assert isinstance(pool, AsyncAdaptedQueuePool)
+    return pool.checkedout()
+
+
+async def _committed_values(database: PostgresDatabase) -> list[str]:
     """Read `test_rows` on a connection of its own, which sees only commits."""
     async with connected(database.app_url) as connection:
         result = await connection.execute(select(test_rows.c.value))
@@ -46,7 +59,7 @@ async def _insert(unit_of_work: PostgresUnitOfWork, value: str) -> None:
 
 @pytest.mark.container
 async def test_a_clean_exit_commits(
-    make_unit_of_work: Callable[[], PostgresUnitOfWork], database: PostgresServer
+    make_unit_of_work: Callable[[], PostgresUnitOfWork], database: PostgresDatabase
 ) -> None:
     async with make_unit_of_work() as uow:
         await _insert(uow, "kept")
@@ -56,7 +69,9 @@ async def test_a_clean_exit_commits(
 
 @pytest.mark.container
 async def test_an_exception_rolls_back(
-    make_unit_of_work: Callable[[], PostgresUnitOfWork], database: PostgresServer
+    make_unit_of_work: Callable[[], PostgresUnitOfWork],
+    engine: AsyncEngine,
+    database: PostgresDatabase,
 ) -> None:
     msg = "the use case failed"
 
@@ -69,11 +84,14 @@ async def test_an_exception_rolls_back(
         await failing_use_case()
 
     assert await _committed_values(database) == []
+    assert _checked_out(engine) == 0
 
 
 @pytest.mark.container
 async def test_cancellation_rolls_back(
-    make_unit_of_work: Callable[[], PostgresUnitOfWork], database: PostgresServer
+    make_unit_of_work: Callable[[], PostgresUnitOfWork],
+    engine: AsyncEngine,
+    database: PostgresDatabase,
 ) -> None:
     inserted = asyncio.Event()
 
@@ -90,6 +108,7 @@ async def test_cancellation_rolls_back(
         await task
 
     assert await _committed_values(database) == []
+    assert _checked_out(engine) == 0
 
 
 @pytest.mark.container

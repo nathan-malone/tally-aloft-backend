@@ -1,9 +1,10 @@
-import subprocess
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from ruff import find_ruff_bin
+from tests.support.paths import RUFF_TOML, read_toml
+from tests.support.ruff import ruff
 
-from tests.support.paths import ROOT, RUFF_TOML, read_toml
+if TYPE_CHECKING:
+    import subprocess
 
 
 def _ruff_config() -> dict[str, object]:
@@ -37,24 +38,7 @@ def _ruff_lint_lines() -> list[str]:
 
 
 def _ruff_check(source: str, filename: str) -> subprocess.CompletedProcess[str]:
-    # The binary itself, not `python -m ruff`, which starts Python to find it.
-    return subprocess.run(
-        [
-            find_ruff_bin(),
-            "check",
-            "--no-cache",
-            "--output-format",
-            "concise",
-            "--stdin-filename",
-            filename,
-            "-",
-        ],
-        input=source,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
-    )
+    return ruff("check", "--output-format", "concise", source=source, filename=filename)
 
 
 def test_selects_every_rule_without_preview() -> None:

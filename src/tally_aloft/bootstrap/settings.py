@@ -42,9 +42,10 @@ _NOT_A_DATABASE_URL = (
     "must be a postgresql+asyncpg://user:password@host:port/database URL, with "
     "reserved characters in the user and password percent-encoded"
 )
-# For profiles that never connect. Port 9 on localhost refuses connections, so a
-# stray connection fails at once instead of reaching a developer's database.
-_UNUSED_DATABASE_URL = "postgresql+asyncpg://unused@127.0.0.1:9/unused"
+# For profiles and tests that never connect. Port 9 on localhost refuses
+# connections, so a stray one fails at once instead of reaching a developer's
+# database.
+UNUSED_DATABASE_URL = "postgresql+asyncpg://unused@127.0.0.1:9/unused"
 
 
 class Environment(StrEnum):
@@ -142,7 +143,7 @@ class Settings(BaseSettings):
         return _ExplicitSettings.model_validate(
             {
                 "environment": Environment.TEST,
-                "database_url": _UNUSED_DATABASE_URL,
+                "database_url": UNUSED_DATABASE_URL,
                 **values,
             }
         )
@@ -157,7 +158,7 @@ class Settings(BaseSettings):
         return _ExplicitSettings.model_validate(
             {
                 "environment": Environment.DEVELOPMENT,
-                "database_url": _UNUSED_DATABASE_URL,
+                "database_url": UNUSED_DATABASE_URL,
             }
         )
 
@@ -241,9 +242,11 @@ def _check_database_url(value: SecretStr) -> SecretStr:
         url = make_url(value.get_secret_value())
     except ArgumentError, ValueError:
         raise ValueError(_NOT_A_DATABASE_URL) from None
-    if url.drivername != _DATABASE_DRIVER or url.host in {None, ""}:
-        raise ValueError(_NOT_A_DATABASE_URL)
-    if url.database in {None, ""}:
+    if (
+        url.drivername != _DATABASE_DRIVER
+        or url.host in {None, ""}
+        or url.database in {None, ""}
+    ):
         raise ValueError(_NOT_A_DATABASE_URL)
     return value
 

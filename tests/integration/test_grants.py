@@ -2,29 +2,33 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from tests.support.migrations import alembic_config, real_head, upgrade, write_revision
-from tests.support.postgres import INSUFFICIENT_PRIVILEGE, connected, sqlstate
+from tests.support.migrations import (
+    alembic_config,
+    current_revision,
+    real_head,
+    upgrade,
+    write_revision,
+)
+from tests.support.postgres import (
+    DATABASE,
+    INSUFFICIENT_PRIVILEGE,
+    execute,
+    sqlstate,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.support.postgres import PostgresServer
+    from tests.support.postgres import PostgresDatabase
 
 pytestmark = pytest.mark.container
 
 
-async def _run_as_app(server: PostgresServer, statement: str) -> None:
-    async with connected(server.app_url) as connection:
-        _ = await connection.execute(text(statement))
-        await connection.commit()
-
-
-async def _sqlstate_as_app(server: PostgresServer, statement: str) -> str | None:
+async def _sqlstate_as_app(database: PostgresDatabase, statement: str) -> str | None:
     with pytest.raises(DBAPIError) as error:
-        await _run_as_app(server, statement)
+        await execute(database.app_url, statement)
     return sqlstate(error.value)
 
 
@@ -33,13 +37,13 @@ async def _sqlstate_as_app(server: PostgresServer, statement: str) -> str | None
     ["CREATE TABLE x (id int)", "CREATE SCHEMA x", "CREATE TEMP TABLE x (id int)"],
 )
 async def test_the_app_role_can_create_nothing(
-    postgres_server: PostgresServer, statement: str
+    postgres_server: PostgresDatabase, statement: str
 ) -> None:
     assert await _sqlstate_as_app(postgres_server, statement) == INSUFFICIENT_PRIVILEGE
 
 
 async def test_new_tables_are_append_only_until_a_migration_grants_more(
-    fresh_database: PostgresServer, tmp_path: Path
+    fresh_database: PostgresDatabase, tmp_path: Path
 ) -> None:
     write_revision(
         tmp_path,
@@ -56,8 +60,8 @@ async def test_new_tables_are_append_only_until_a_migration_grants_more(
     config = alembic_config(fresh_database.owner_url, extra_versions=tmp_path)
     await asyncio.to_thread(upgrade, config, "create_ledger")
 
-    await _run_as_app(fresh_database, "INSERT INTO ledger VALUES (1, 'first')")
-    await _run_as_app(fresh_database, "SELECT * FROM ledger")
+    await execute(fresh_database.app_url, "INSERT INTO ledger VALUES (1, 'first')")
+    await execute(fresh_database.app_url, "SELECT * FROM ledger")
     update = "UPDATE ledger SET note = 'changed' WHERE id = 1"
     assert await _sqlstate_as_app(fresh_database, update) == INSUFFICIENT_PRIVILEGE
     delete = "DELETE FROM ledger WHERE id = 1"
@@ -65,5 +69,58 @@ async def test_new_tables_are_append_only_until_a_migration_grants_more(
 
     await asyncio.to_thread(upgrade, config, "grant_update")
 
-    await _run_as_app(fresh_database, update)
+    await execute(fresh_database.app_url, update)
     assert await _sqlstate_as_app(fresh_database, delete) == INSUFFICIENT_PRIVILEGE
+
+
+@pytest.mark.parametrize(
+    ("as_superuser", "on_database", "undo"),
+    [
+        (('GRANT CREATE ON DATABASE "{name}" TO tally_aloft_app',), False, None),
+        (
+            (
+                "ALTER SCHEMA public OWNER TO postgres",
+                "GRANT CREATE ON SCHEMA public TO PUBLIC",
+            ),
+            True,
+            None,
+        ),
+        (
+            ("ALTER ROLE tally_aloft_app CREATEDB",),
+            False,
+            "ALTER ROLE tally_aloft_app NOCREATEDB",
+        ),
+    ],
+    ids=["database-create", "public-owned-elsewhere", "role-attribute"],
+)
+async def test_the_grants_revision_fails_while_the_app_role_could_create_objects(
+    fresh_database: PostgresDatabase,
+    as_superuser: tuple[str, ...],
+    *,
+    on_database: bool,
+    undo: str | None,
+) -> None:
+    # Roles are cluster-wide, so a changed role is put back for later tests.
+    target = fresh_database if on_database else fresh_database.on(DATABASE)
+    for statement in as_superuser:
+        await execute(target.superuser_url, statement.format(name=fresh_database.name))
+    config = alembic_config(fresh_database.owner_url)
+    try:
+        with pytest.raises(DBAPIError, match="tally_aloft_app can still create"):
+            await asyncio.to_thread(upgrade, config)
+    finally:
+        if undo is not None:
+            await execute(fresh_database.superuser_url, undo)
+
+    assert await current_revision(fresh_database) is None
+
+
+async def test_the_grants_revision_runs_only_as_the_owner(
+    fresh_database: PostgresDatabase,
+) -> None:
+    config = alembic_config(fresh_database.superuser_url)
+
+    with pytest.raises(DBAPIError, match="must run as tally_aloft_owner"):
+        await asyncio.to_thread(upgrade, config)
+
+    assert await current_revision(fresh_database) is None

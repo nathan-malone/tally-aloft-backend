@@ -79,6 +79,20 @@ def test_ships_the_migrations(
     assert output == f"{real_head()} (head)"
 
 
+def test_migration_command_loads_its_environment(
+    docker_client: docker.DockerClient, api_image: Image
+) -> None:
+    # Without its settings, `alembic upgrade head` stops in env.py, after it has
+    # imported the app's settings and tables from the image's environment.
+    with pytest.raises(ContainerError) as error:
+        _run(docker_client, api_image, ["alembic", "upgrade", "head"])
+
+    stderr = error.value.stderr
+    output = stderr.decode() if isinstance(stderr, bytes) else str(stderr)
+    assert "TALLY_MIGRATION_DATABASE_URL (missing)" in output
+    assert "Traceback" not in output
+
+
 def test_pytest_is_not_installed(
     docker_client: docker.DockerClient, api_image: Image
 ) -> None:

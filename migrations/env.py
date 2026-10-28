@@ -4,6 +4,10 @@ Alembic's environment: runs every migration as the owner role.
 It reads only `MigrationSettings`, so the owner's credentials never come from
 the services' settings. Each session sets the lock timeout, and no statement
 timeout, as connection settings, so both hold inside autocommit blocks too.
+
+A caller that runs Alembic in its own Python process, as the tests do, may set
+two `config.attributes`: `migration_settings`, a `MigrationSettings` used in
+place of the environment, and `configure_logging=False`, to keep its logging.
 """
 
 import asyncio
@@ -71,7 +75,7 @@ if context.is_offline_mode():
     msg = "Offline mode (--sql) isn't supported; run migrations against a database."
     raise SystemExit(msg)
 migration_settings = _settings()
-# A caller that runs Alembic in its own process, such as the tests, owns logging.
+# A caller running Alembic inside its own process keeps its logging setup.
 configure_logging = config.attributes.get("configure_logging") is not False
 if configure_logging and config.config_file_name is not None:
     fileConfig(config.config_file_name)

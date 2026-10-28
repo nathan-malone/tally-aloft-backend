@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from tally_aloft.bootstrap.settings import UNUSED_DATABASE_URL
 from tests.support.paths import ROOT
 
 if TYPE_CHECKING:
@@ -22,11 +23,11 @@ STARTUP_TIMEOUT_SECONDS = 60
 # How long a terminated server may take to exit. Windows tears processes down
 # one after another, so under a parallel test run this takes seconds.
 STOP_TIMEOUT_SECONDS = 60
-# The fewest variables the API starts with. The database is never connected to
-# by the routes these servers answer, so a refusing localhost port will do.
+# The fewest variables the API starts with. The routes these servers answer
+# never touch the database, so the URL that refuses connections will do.
 REQUIRED_SETTINGS = {
     "TALLY_ENVIRONMENT": "test",
-    "TALLY_DATABASE_URL": "postgresql+asyncpg://unused@127.0.0.1:9/unused",
+    "TALLY_DATABASE_URL": UNUSED_DATABASE_URL,
 }
 
 

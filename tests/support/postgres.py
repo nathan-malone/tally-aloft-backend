@@ -41,23 +41,27 @@ LOCK_NOT_AVAILABLE = "55P03"
 
 
 @dataclass(frozen=True, slots=True)
-class PostgresServer:
-    """Where a test Postgres listens, and the URL of each role on a database."""
+class PostgresDatabase:
+    """One database on a test Postgres, and each role's URL for it."""
 
     host: str
     port: int
-    database: str = DATABASE
+    name: str = DATABASE
 
     def url(self, role: str) -> str:
-        """Return `role`'s asyncpg URL, with the local password the init script set."""
-        password = SUPERUSER if role == SUPERUSER else role
+        """
+        Return `role`'s asyncpg URL for this database.
+
+        Every local password equals its role's name, as the container's
+        environment and `compose/postgres-init.sql` set them.
+        """
         return URL.create(
             "postgresql+asyncpg",
             username=role,
-            password=password,
+            password=role,
             host=self.host,
             port=self.port,
-            database=self.database,
+            database=self.name,
         ).render_as_string(hide_password=False)
 
     @property
@@ -75,14 +79,18 @@ class PostgresServer:
         """Return the application role's URL, which tests connect with."""
         return self.url(APP_ROLE)
 
-    def on(self, database: str) -> PostgresServer:
-        """Return this server with `database` in place of the default one."""
-        return replace(self, database=database)
+    def on(self, name: str) -> PostgresDatabase:
+        """Return the database called `name` on the same server."""
+        return replace(self, name=name)
 
 
 @contextmanager
-def running_postgres() -> Generator[PostgresServer]:
-    """Start Postgres with the Compose init script, and stop it on exit."""
+def running_postgres() -> Generator[PostgresDatabase]:
+    """
+    Start Postgres with the Compose init script, and stop it on exit.
+
+    It yields the default database, which the session's migrations run on.
+    """
     container = PostgresContainer(
         POSTGRES_IMAGE,
         username=SUPERUSER,
@@ -95,7 +103,7 @@ def running_postgres() -> Generator[PostgresServer]:
     # testcontainers waits with psql over TCP, which the image's initialization
     # server doesn't listen on, so the init script has run by the time it's up.
     with container:
-        yield PostgresServer(
+        yield PostgresDatabase(
             host=container.get_container_host_ip(),
             port=container.get_exposed_port(_PORT),
         )
@@ -118,43 +126,45 @@ async def connected(
         await engine.dispose()
 
 
-async def execute(url: str, statement: str) -> None:
-    """Run one statement on its own connection, and commit it."""
-    async with connected(url) as connection:
+async def execute(url: str, statement: str, *, autocommit: bool = False) -> None:
+    """
+    Run one statement on its own connection, and commit it.
+
+    `autocommit` runs it outside any transaction, as `CREATE DATABASE` needs.
+    """
+    async with connected(url, autocommit=autocommit) as connection:
         _ = await connection.execute(text(statement))
         await connection.commit()
 
 
 @asynccontextmanager
-async def temporary_database(server: PostgresServer) -> AsyncGenerator[PostgresServer]:
+async def temporary_database(
+    database: PostgresDatabase,
+) -> AsyncGenerator[PostgresDatabase]:
     """
     Create an empty database owned by the owner role, and drop it on exit.
 
-    Tests that change the schema or the migration state run on one, so they
-    never touch the shared database.
+    It's on the same server as `database`. Tests that change the schema or
+    the migration state run on one, so they never touch the shared database.
     """
     name = f"test_{uuid.uuid4().hex}"
-    await execute_as_superuser(server, f'CREATE DATABASE "{name}" OWNER {OWNER_ROLE}')
+    create = f'CREATE DATABASE "{name}" OWNER {OWNER_ROLE}'
+    await execute(database.superuser_url, create, autocommit=True)
     try:
-        yield server.on(name)
+        yield database.on(name)
     finally:
-        await execute_as_superuser(server, f'DROP DATABASE "{name}" WITH (FORCE)')
+        drop = f'DROP DATABASE "{name}" WITH (FORCE)'
+        await execute(database.superuser_url, drop, autocommit=True)
 
 
-async def execute_as_superuser(server: PostgresServer, statement: str) -> None:
-    """Run a statement that can't run in a transaction, such as `CREATE DATABASE`."""
-    async with connected(server.superuser_url, autocommit=True) as connection:
-        _ = await connection.execute(text(statement))
-
-
-async def truncate_tables(server: PostgresServer, *, lock_timeout: int = 5) -> None:
+async def truncate_tables(database: PostgresDatabase, *, lock_timeout: int = 5) -> None:
     """
     Empty every table but Alembic's, through an owner connection of its own.
 
     A test that leaves a transaction open on a table makes this fail with a
     lock timeout rather than hang the run.
     """
-    async with connected(server.owner_url) as connection:
+    async with connected(database.owner_url) as connection:
         _ = await connection.execute(text(f"SET lock_timeout = '{lock_timeout}s'"))
         result = await connection.execute(
             text(

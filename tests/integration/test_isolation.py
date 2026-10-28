@@ -4,7 +4,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.support.postgres import (
     LOCK_NOT_AVAILABLE,
-    PostgresServer,
+    PostgresDatabase,
     connected,
     sqlstate,
     truncate_tables,
@@ -14,13 +14,13 @@ from tests.support.tables import test_rows
 pytestmark = pytest.mark.container
 
 
-async def _count(server: PostgresServer) -> int:
+async def _count(server: PostgresDatabase) -> int:
     async with connected(server.app_url) as connection:
         result = await connection.execute(select(test_rows.c.id))
         return len(result.all())
 
 
-async def _commit_a_row(server: PostgresServer) -> None:
+async def _commit_a_row(server: PostgresDatabase) -> None:
     async with connected(server.app_url) as connection:
         _ = await connection.execute(insert(test_rows).values(value="committed"))
         await connection.commit()
@@ -28,7 +28,7 @@ async def _commit_a_row(server: PostgresServer) -> None:
 
 @pytest.mark.parametrize("run", ["first", "second"])
 async def test_each_test_starts_with_empty_tables(
-    database: PostgresServer, run: str
+    database: PostgresDatabase, run: str
 ) -> None:
     assert await _count(database) == 0, run
 
@@ -36,7 +36,7 @@ async def test_each_test_starts_with_empty_tables(
 
 
 async def test_truncation_empties_the_tables_but_keeps_the_migration_state(
-    database: PostgresServer,
+    database: PostgresDatabase,
 ) -> None:
     await _commit_a_row(database)
 
@@ -51,7 +51,7 @@ async def test_truncation_empties_the_tables_but_keeps_the_migration_state(
 
 
 async def test_truncation_fails_rather_than_waits_on_an_open_transaction(
-    database: PostgresServer,
+    database: PostgresDatabase,
 ) -> None:
     async with connected(database.app_url) as idle:
         _ = await idle.execute(select(test_rows.c.id))

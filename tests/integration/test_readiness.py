@@ -11,7 +11,7 @@ from tests.support.server import free_port, silent_server
 if TYPE_CHECKING:
     import httpx
 
-    from tests.support.postgres import PostgresServer
+    from tests.support.postgres import PostgresDatabase
 
 # NFR-6: /readyz answers within 3 seconds even when a dependency is down.
 READYZ_DEADLINE_SECONDS = 3
@@ -32,7 +32,7 @@ def _assert_postgres_not_ready(response: httpx.Response) -> None:
 
 
 @pytest.mark.container
-async def test_ready_when_postgres_answers(postgres_server: PostgresServer) -> None:
+async def test_ready_when_postgres_answers(postgres_server: PostgresDatabase) -> None:
     response = await _readyz(postgres_server.app_url)
 
     assert response.status_code == 200
