@@ -72,6 +72,88 @@ def test_rejects_wildcards_and_malformed_networks(
         Settings()
 
 
+def test_allows_no_origin_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
+    assert Settings().cors_origins == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://tallyaloft.app", ("https://tallyaloft.app",)),
+        (
+            "https://tallyaloft.app, http://localhost:5173",
+            ("https://tallyaloft.app", "http://localhost:5173"),
+        ),
+        ("http://[::1]:5173", ("http://[::1]:5173",)),
+        ("http://[2001:db8::1:0:0:1]", ("http://[2001:db8::1:0:0:1]",)),
+        ("http://[::ffff:7f00:1]", ("http://[::ffff:7f00:1]",)),
+        ("http://127.0.0.1:5173", ("http://127.0.0.1:5173",)),
+        ("http://app.example.:5173", ("http://app.example.:5173",)),
+        ("https://tallyaloft.app,", ("https://tallyaloft.app",)),
+        ("", ()),
+    ],
+)
+def test_parses_cors_origins(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: tuple[str, ...]
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_CORS_ORIGINS", value)
+
+    assert Settings().cors_origins == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "*",
+        "https://tallyaloft.app, *",
+        "https://tallyaloft.app/",
+        "https://tallyaloft.app/app",
+        "https://tallyaloft.app?x=1",
+        "https://user@tallyaloft.app",
+        "https://TallyAloft.app",
+        "HTTPS://tallyaloft.app",
+        "https://tallyaloft.app:443",
+        "http://localhost:80",
+        "https://tallyaloft.app:99999",
+        "https://tallyaloft.app:0",
+        "https://bücher.example",
+        "http://[0:0:0:0:0:0:0:1]",
+        "http://[::0001]",
+        "http://[2001:DB8::1]",
+        "http://[2001:db8:0:0:1:0:0:1]",
+        "http://[::ffff:127.0.0.1]",
+        "http://[fe80::1%25eth0]",
+        "http://[v1.x]",
+        "http://127.1",
+        "http://0x7f.0.0.1",
+        "http://127.000.0.1",
+        "http://127.0.0.1.",
+        "http://tally%61loft.app",
+        "http://tally aloft.app",
+        "http://tally<aloft.app",
+        "http://tally^aloft.app",
+        "http://tally|aloft.app",
+        "http://tally\\aloft.app",
+        "http://tally\x01aloft.app",
+        "http://tally\x7faloft.app",
+        "ftp://tallyaloft.app",
+        "tallyaloft.app",
+        "null",
+    ],
+)
+def test_rejects_wildcards_and_origins_that_match_nothing(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_CORS_ORIGINS", value)
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
 def test_ignores_unknown_tally_variables_without_echoing_them(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

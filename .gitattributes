@@ -1,0 +1,3 @@
+# openapi.json is compared byte for byte with the export, which writes LF, so
+# a Windows checkout under core.autocrlf=true must not turn it into CRLF.
+openapi.json text eol=lf

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.support.paths import PYPROJECT, ROOT
+from tests.support.paths import IMPORT_LINTER_CONFIG, ROOT
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,7 +32,7 @@ def package(tmp_path: Path) -> Path:
 def _lint_imports(package: Path) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(package.parent)}
     return subprocess.run(
-        [sys.executable, "-c", RUN_LINT_IMPORTS, str(PYPROJECT)],
+        [sys.executable, "-c", RUN_LINT_IMPORTS, str(IMPORT_LINTER_CONFIG)],
         capture_output=True,
         text=True,
         cwd=package.parent,

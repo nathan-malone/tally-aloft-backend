@@ -1,0 +1,70 @@
+# Import Linter reads INI here; each contract is a section named
+# importlinter:contract:<id>, and a list is one item per indented line.
+[importlinter]
+root_package = tally_aloft
+include_external_packages = true
+
+[importlinter:contract:layers]
+name = Dependencies point inward
+type = layers
+layers =
+    tally_aloft.main | tally_aloft.worker
+    tally_aloft.bootstrap
+    tally_aloft.adapters
+    tally_aloft.application
+    tally_aloft.domain
+
+# Levels inside each package. Every domain has a package in both.
+# Same-level domains go on one line, separated by " | ".
+[importlinter:contract:domain-levels-within]
+name = Domain levels within domain/ and application/
+type = layers
+containers =
+    tally_aloft.domain
+    tally_aloft.application
+layers =
+    shared
+exhaustive = true
+exhaustive_ignores =
+    ports
+    registry
+
+# Levels across the two packages, so a use case can't reach up into a
+# higher domain's rules. Each line pairs a domain with its use cases;
+# same-level domains join the same line with " : ".
+[importlinter:contract:domain-levels-across]
+name = Domain levels across domain/ and application/
+type = layers
+layers =
+    tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared
+
+[importlinter:contract:adapters-independent]
+name = Adapters are independent
+type = independence
+modules =
+    tally_aloft.adapters.inbound.*
+    tally_aloft.adapters.outbound.*
+
+# Every installed framework or vendor package. Add each new one when it's
+# adopted; a package that isn't installed fails the contract.
+[importlinter:contract:no-vendor-code]
+name = Domain and application have no framework or vendor code
+type = forbidden
+source_modules =
+    tally_aloft.domain
+    tally_aloft.application
+forbidden_modules =
+    aiohttp
+    alembic
+    asyncpg
+    fastapi
+    logfire
+    opentelemetry
+    pydantic
+    pydantic_settings
+    redis
+    sqlalchemy
+    starlette
+    taskiq
+    taskiq_redis
+    uvicorn

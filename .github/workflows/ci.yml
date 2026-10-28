@@ -1,4 +1,4 @@
-# Every pull request runs the seven checks on native ARM64, the architecture the
+# Every pull request runs the eight checks on native ARM64, the architecture the
 # image ships for. A failing step fails the run. Each step calls a Makefile
 # target, so the commands live in the Makefile only.
 name: CI
@@ -47,6 +47,8 @@ jobs:
       run: make boundaries.check
     - name: Check for patterns AI coding agents leave behind
       run: make slop.check
+    - name: Check the API schema is current
+      run: make openapi.check
 
   test:
     name: Build & unit tests

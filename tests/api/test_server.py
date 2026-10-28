@@ -2,6 +2,7 @@ import os
 import subprocess
 
 import httpx
+import pytest
 
 from tests.support.paths import ROOT
 from tests.support.server import (
@@ -13,8 +14,11 @@ from tests.support.server import (
 )
 
 
-def test_invalid_settings_stop_the_api_before_it_serves() -> None:
-    env = {**without_tally_variables(os.environ), "TALLY_FORWARDED_ALLOW_IPS": "*"}
+@pytest.mark.parametrize(
+    "variable", ["TALLY_FORWARDED_ALLOW_IPS", "TALLY_CORS_ORIGINS"]
+)
+def test_invalid_settings_stop_the_api_before_it_serves(variable: str) -> None:
+    env = {**without_tally_variables(os.environ), variable: "*"}
 
     result = subprocess.run(
         uvicorn_command(API_APP, free_port()),
@@ -28,7 +32,7 @@ def test_invalid_settings_stop_the_api_before_it_serves() -> None:
 
     assert result.returncode != 0
     assert result.stderr.count("TALLY_ENVIRONMENT") == 1
-    assert result.stderr.count("TALLY_FORWARDED_ALLOW_IPS") == 1
+    assert result.stderr.count(variable) == 1
     assert "Traceback" not in result.stderr
     assert "*" not in result.stderr
     assert "Uvicorn running" not in result.stderr

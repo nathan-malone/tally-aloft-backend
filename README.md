@@ -22,6 +22,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make check` | Every check and the full test suite, as CI runs them |
 | `make check.fast` | The same, without the tests that need Docker |
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
+| `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
 | `make packages.outdated.show` | Show which direct dependencies have newer releases |
 | `make packages.update PACKAGE=ruff` | Upgrade one package in `uv.lock` or `pnpm-lock.yaml`, or every package without `PACKAGE` |
 
@@ -51,7 +52,7 @@ This builds the image from the `Dockerfile` and starts the API on <http://127.0.
 
 ## Checks
 
-`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind) and `make test` (tests).
+`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema) and `make test` (tests).
 
 `make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop.
 
@@ -65,3 +66,4 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | --- | --- | --- | --- |
 | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
 | `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |
+| `TALLY_CORS_ORIGINS` | Comma-separated browser origins that CORS allows, such as `https://tallyaloft.app`. Each is exactly a lowercase `scheme://host[:port]`, with no path and no default port. `*` is rejected. | none | no |

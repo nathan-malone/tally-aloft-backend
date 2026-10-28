@@ -1,21 +1,43 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tally_aloft.application.registry import UseCases
+from tally_aloft.application.shared.check_readiness import CheckReadiness
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from http import HTTPStatus
+
+    from tally_aloft.application.ports.health import DependencyCheck
     from tally_aloft.bootstrap.settings import Settings
+    from tally_aloft.domain.shared.errors import CodedError
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Overrides:
     """
-    Adapter replacements, which tests pass to `create_app`.
+    Test replacements for adapters and HTTP configuration, passed to `create_app`.
 
     Each story that adds an adapter adds an optional field for it here.
     """
 
+    # Statuses for test-only errors, merged over the production error table.
+    error_statuses: Mapping[type[CodedError], HTTPStatus] = field(default_factory=dict)
+    # Readiness checks in place of the real ones. `None` builds the real ones;
+    # `()` means no checks at all, whatever later stories add.
+    dependency_checks: tuple[DependencyCheck, ...] | None = None
 
-def build_use_cases(settings: Settings, overrides: Overrides) -> UseCases:  # noqa: ARG001  # Later stories build adapters from these.
+
+def build_use_cases(settings: Settings, overrides: Overrides) -> UseCases:  # noqa: ARG001  # Later stories build adapters from settings.
     """Build every adapter and the `UseCases` registry from them."""
-    return UseCases()
+    checks = (
+        _dependency_checks()
+        if overrides.dependency_checks is None
+        else overrides.dependency_checks
+    )
+    return UseCases(check_readiness=CheckReadiness(checks))
+
+
+def _dependency_checks() -> tuple[DependencyCheck, ...]:
+    """Return the real readiness checks; each data store's story adds its own."""
+    return ()

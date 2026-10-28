@@ -18,6 +18,9 @@ API_APP = "tally_aloft.main:app"
 PROBE_APP = "tests.support.probe_app:app"
 # How long a server, on the host or in a container, may take to start serving.
 STARTUP_TIMEOUT_SECONDS = 60
+# How long a terminated server may take to exit. Windows tears processes down
+# one after another, so under a parallel test run this takes seconds.
+STOP_TIMEOUT_SECONDS = 60
 
 
 def without_tally_variables(environ: Mapping[str, str]) -> dict[str, str]:
@@ -69,7 +72,13 @@ def running_server(app: str, env: Mapping[str, str]) -> Generator[str]:
             yield base_url
         finally:
             process.terminate()
-            process.wait(timeout=10)
+            try:
+                process.wait(timeout=STOP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # Never leave a server running after the test.
+                process.kill()
+                process.wait()
+                raise
 
 
 def _wait_until_live(
