@@ -13,6 +13,10 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
+"migrations/**" = [
+    "INP001", # Alembic loads env.py and each revision as a file, not from a package.
+    "N999",   # Revision files are named by date and revision ID, so start with a digit.
+]
 "scripts/**" = [
     "INP001", # Scripts run as files, not as modules of a package.
 ]

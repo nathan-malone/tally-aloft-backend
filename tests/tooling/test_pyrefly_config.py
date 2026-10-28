@@ -40,9 +40,11 @@ def test_every_error_kind_left_off_has_a_reason() -> None:
 
 
 def test_every_suppression_names_its_kind_and_reason() -> None:
-    suppressions = (
-        _suppressions("src") + _suppressions("tests") + _suppressions("scripts")
-    )
+    suppressions = [
+        suppression
+        for folder in ("src", "tests", "scripts", "migrations")
+        for suppression in _suppressions(folder)
+    ]
 
     assert [s for s in suppressions if WELL_FORMED.search(s) is None] == []
 

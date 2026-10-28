@@ -1,7 +1,7 @@
 preset = "strict"
 check-unannotated-defs = true
 python-version = "3.14"
-project-includes = ["src", "tests", "scripts"]
+project-includes = ["src", "tests", "scripts", "migrations"]
 search-path = [".", "src"]
 
 # Pyrefly 1.4's off-by-default error kinds that the strict preset leaves off
@@ -69,3 +69,10 @@ variance-mismatch = "error"
 matches = "tests/**"
 [sub-config.errors]
 unused-call-result = false  # Side-effect calls are the test idiom.
+
+# Alembic's documented API is `from alembic import op, context`, which its
+# package imports without re-exporting.
+[[sub-config]]
+matches = "migrations/**"
+[sub-config.errors]
+implicit-reexport = false  # Alembic's `op` and `context` aren't re-exported.

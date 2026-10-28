@@ -6,19 +6,24 @@ development's. Tests connect as the application role, and the owner role runs
 the migrations and the clean-up.
 """
 
-from contextlib import contextmanager
+import uuid
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
 from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 from testcontainers.community.postgres import PostgresContainer
 
 from tests.support.paths import ROOT
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Generator
 
     from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncConnection
 
 # The one place the tests' Postgres version is set; compose.yaml must match it.
 POSTGRES_IMAGE = "postgres:18"
@@ -94,6 +99,52 @@ def running_postgres() -> Generator[PostgresServer]:
             host=container.get_container_host_ip(),
             port=container.get_exposed_port(_PORT),
         )
+
+
+@asynccontextmanager
+async def connected(
+    url: str, *, autocommit: bool = False
+) -> AsyncGenerator[AsyncConnection]:
+    """Yield one connection to `url`, outside any pool, and close it on exit."""
+    engine = create_async_engine(
+        url,
+        poolclass=NullPool,
+        isolation_level="AUTOCOMMIT" if autocommit else "READ COMMITTED",
+    )
+    try:
+        async with engine.connect() as connection:
+            yield connection
+    finally:
+        await engine.dispose()
+
+
+async def execute(url: str, statement: str) -> None:
+    """Run one statement on its own connection, and commit it."""
+    async with connected(url) as connection:
+        _ = await connection.execute(text(statement))
+        await connection.commit()
+
+
+@asynccontextmanager
+async def temporary_database(server: PostgresServer) -> AsyncGenerator[PostgresServer]:
+    """
+    Create an empty database owned by the owner role, and drop it on exit.
+
+    Tests that change the schema or the migration state run on one, so they
+    never touch the shared database.
+    """
+    name = f"test_{uuid.uuid4().hex}"
+    await execute_as_superuser(server, f'CREATE DATABASE "{name}" OWNER {OWNER_ROLE}')
+    try:
+        yield server.on(name)
+    finally:
+        await execute_as_superuser(server, f'DROP DATABASE "{name}" WITH (FORCE)')
+
+
+async def execute_as_superuser(server: PostgresServer, statement: str) -> None:
+    """Run a statement that can't run in a transaction, such as `CREATE DATABASE`."""
+    async with connected(server.superuser_url, autocommit=True) as connection:
+        _ = await connection.execute(text(statement))
 
 
 def sqlstate(error: DBAPIError) -> str | None:

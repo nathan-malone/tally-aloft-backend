@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 import pytest
 from docker.errors import ContainerError
 
+from tests.support.migrations import real_head
+
 if TYPE_CHECKING:
     import docker
     from docker.models.images import Image
@@ -66,6 +68,15 @@ def test_contains_no_tests(
     docker_client: docker.DockerClient, api_image: Image
 ) -> None:
     assert _run(docker_client, api_image, ["python", "-c", NO_TESTS]) == "False False"
+
+
+def test_ships_the_migrations(
+    docker_client: docker.DockerClient, api_image: Image
+) -> None:
+    # `alembic heads` reads alembic.ini and the scripts, and needs no database.
+    output = _run(docker_client, api_image, ["alembic", "heads"])
+
+    assert output == f"{real_head()} (head)"
 
 
 def test_pytest_is_not_installed(

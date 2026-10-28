@@ -50,6 +50,26 @@ make containers.up
 
 This builds the image from the `Dockerfile` and starts the API on <http://127.0.0.1:8000/livez>, bound to `127.0.0.1` only. The container's settings are in `compose.yaml`, not in `.env`. Stop it with Ctrl+C, and run `make containers.down` to remove the containers.
 
+## Migrations
+
+Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_owner`, from `TALLY_MIGRATION_DATABASE_URL`. The services connect as `tally_aloft_app` and never read that variable. The image's migration command is `alembic upgrade head`, run from `/app` before the services update.
+
+- **Grants live in migrations.** The first revision gives `tally_aloft_app` `SELECT` and `INSERT` on every table the owner creates, and no DDL. A revision that creates a table the application must change grants it `UPDATE` or `DELETE` itself, as in `op.execute("GRANT UPDATE ON flights TO tally_aloft_app")`, so a table is append-only unless its migration says otherwise. A `serial` column or a `DEFAULT nextval()` also needs `GRANT USAGE` on its sequence; identity columns and `uuidv7()` keys don't.
+- **Expand, then contract.** Old and new code run side by side during a deploy, so add, backfill and switch in one release, and remove in a later one.
+- **Timeouts.** Every migration session sets `lock_timeout` (`TALLY_MIGRATION_LOCK_TIMEOUT`, 5 seconds by default), so a migration that waits on a lock fails instead of blocking the tables behind it. Migrations run with no `statement_timeout`.
+- **Concurrent indexes.** `CREATE INDEX CONCURRENTLY` can't run in a transaction. Build it in its own revision, inside an autocommit block, where the lock timeout still applies:
+
+  ```python
+  def upgrade() -> None:
+      with op.get_context().autocommit_block():
+          op.create_index(
+              "ix_flights_pilot_id", "flights", ["pilot_id"], postgresql_concurrently=True
+          )
+  ```
+
+  Each revision runs in its own transaction, because the block commits everything before it.
+- **New revisions** are fixed and formatted by Ruff as Alembic writes them, from `migrations/script.py.mako`.
+
 ## Checks
 
 `make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema) and `make test` (tests).
