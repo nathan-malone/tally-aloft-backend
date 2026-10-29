@@ -454,13 +454,33 @@ def test_deployed_environments_require_an_encrypted_valkey_url(
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
-def test_deployed_environments_accept_an_encrypted_valkey_url(
+def test_deployed_environments_require_a_valkey_password(
     monkeypatch: pytest.MonkeyPatch, environment: str
 ) -> None:
     monkeypatch.setenv("TALLY_ENVIRONMENT", environment)
     monkeypatch.setenv("TALLY_DATABASE_URL", f"{DATABASE_URL}?ssl=verify-full")
+    monkeypatch.setenv("TALLY_VALKEY_URL", "rediss://cache.example:6379/0")
 
-    assert Settings().valkey_url.get_secret_value() == VALKEY_URL
+    with pytest.raises(SystemExit) as error:
+        load_settings()
+
+    assert _exit_message(error) == "Invalid settings: TALLY_VALKEY_URL (value_error)"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+@pytest.mark.parametrize(
+    "value",
+    [VALKEY_URL, "rediss://app-user:user-password@cache.example:6379/0"],
+    ids=["auth-token", "user"],
+)
+def test_deployed_environments_accept_an_encrypted_valkey_url(
+    monkeypatch: pytest.MonkeyPatch, environment: str, value: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", environment)
+    monkeypatch.setenv("TALLY_DATABASE_URL", f"{DATABASE_URL}?ssl=verify-full")
+    monkeypatch.setenv("TALLY_VALKEY_URL", value)
+
+    assert Settings().valkey_url.get_secret_value() == value
 
 
 def test_repr_hides_the_valkey_url(monkeypatch: pytest.MonkeyPatch) -> None:

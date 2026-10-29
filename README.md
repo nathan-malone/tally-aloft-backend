@@ -110,7 +110,7 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_DATABASE_POOL_SIZE` | Connections each process keeps in its pool, at least 1. | `5` | no |
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |
 | `TALLY_DATABASE_STATEMENT_TIMEOUT` | Seconds a statement may run before Postgres cancels it, at least 1. | `30` | no |
-| `TALLY_VALKEY_URL` | The cache's Valkey: `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, with reserved characters in the user and password percent-encoded and no query. In `staging` and `production` it must be `rediss://`. Secret. | none | yes |
+| `TALLY_VALKEY_URL` | The cache's Valkey: `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, with reserved characters in the user and password percent-encoded and no query. In `staging` and `production` it must be `rediss://` and carry a password: an AUTH token (`rediss://:token@host`) or a user's. Secret. | none | yes |
 | `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in `TALLY_DATABASE_URL`'s format and with its `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 

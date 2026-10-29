@@ -41,6 +41,9 @@ _NOT_A_VALKEY_URL = (
     "characters in the user and password percent-encoded"
 )
 _NOT_ENCRYPTED = "must be a rediss:// URL in staging and production"
+# The broker shares the instance, so anything that reached it unauthenticated
+# could read the cache and queue tasks.
+_NOT_AUTHENTICATED = "must carry a password in staging and production"
 
 
 def check_database_url(value: SecretStr, *, deployed: bool) -> SecretStr:
@@ -77,7 +80,8 @@ def check_valkey_url(value: SecretStr, *, deployed: bool) -> SecretStr:
     a path that isn't a database number, so both are checked here. A query
     could change the client's timeouts or turn off TLS verification, so none
     is allowed. redis-py's errors quote parts of the URL, so none is chained.
-    When `deployed`, the URL must also use TLS.
+    When `deployed`, the URL must also use TLS and carry a password, an AUTH
+    token or a user's.
     """
     url = value.get_secret_value()
     try:
@@ -97,4 +101,6 @@ def check_valkey_url(value: SecretStr, *, deployed: bool) -> SecretStr:
         raise ValueError(_NOT_A_VALKEY_URL)
     if deployed and parts.scheme != _ENCRYPTED_VALKEY_SCHEME:
         raise ValueError(_NOT_ENCRYPTED)
+    if deployed and parts.password in {None, ""}:
+        raise ValueError(_NOT_AUTHENTICATED)
     return value
