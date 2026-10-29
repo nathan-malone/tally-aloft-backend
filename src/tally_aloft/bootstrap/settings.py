@@ -6,7 +6,13 @@ from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from typing import Annotated, override
 from urllib.parse import urlsplit
 
-from pydantic import ValidationError, field_validator
+from pydantic import (
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -14,6 +20,8 @@ from pydantic_settings import (
     SettingsConfigDict,
     SettingsError,
 )
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 _ENV_PREFIX = "TALLY_"
 # pydantic-settings 2.16 words a parse error as `error parsing value for field
@@ -35,6 +43,24 @@ _NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
 # with one, and decodes a percent-encoded one, so it never sends either form.
 _FORBIDDEN_DOMAIN_CHARACTER = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 
+_DATABASE_DRIVER = "postgresql+asyncpg"
+_NOT_A_DATABASE_URL = (
+    "must be a postgresql+asyncpg://user:password@host:port/database URL, with "
+    "reserved characters in the user and password percent-encoded"
+)
+# asyncpg's `require` encrypts without checking the server, and `verify-ca`
+# checks the certificate but not the host name, so deployments need
+# `verify-full`. asyncpg reads the CA bundle from PGSSLROOTCERT.
+_VERIFIED_SSL = "verify-full"
+_NOT_VERIFIED = "must end in ?ssl=verify-full in staging and production"
+# A `host` parameter replaces the URL's host, and asyncpg reads one starting
+# with `/` as a Unix socket, which it connects to without TLS.
+_HOST_PARAMETER = "must not have a host parameter in staging and production"
+# For profiles and tests that never connect. Port 9 on localhost refuses
+# connections, so a stray one fails at once instead of reaching a developer's
+# database.
+UNUSED_DATABASE_URL = "postgresql+asyncpg://unused@127.0.0.1:9/unused"
+
 
 class Environment(StrEnum):
     """The deployment a process runs in."""
@@ -43,6 +69,10 @@ class Environment(StrEnum):
     TEST = "test"
     STAGING = "staging"
     PRODUCTION = "production"
+
+
+# The deployments whose database connections must verify the server.
+_DEPLOYED = frozenset({Environment.STAGING, Environment.PRODUCTION})
 
 
 class Settings(BaseSettings):
@@ -73,6 +103,20 @@ class Settings(BaseSettings):
     # lowercase without a default port, so any other form is rejected rather
     # than silently matching nothing.
     cors_origins: Annotated[tuple[str, ...], NoDecode] = ()
+
+    # The application role's connection. Migrations connect as the owner role,
+    # through MigrationSettings, which this model never reads.
+    database_url: SecretStr
+    # Each process opens at most pool size plus overflow connections.
+    database_pool_size: Annotated[int, Field(ge=1)] = 5
+    database_max_overflow: Annotated[int, Field(ge=0)] = 5
+    database_statement_timeout: Annotated[int, Field(ge=1)] = 30
+
+    @field_validator("database_url")
+    @classmethod
+    def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
+        return _check_database_url(value, info.data.get("environment"))
 
     @field_validator("forwarded_allow_ips", mode="before")
     @classmethod
@@ -115,7 +159,11 @@ class Settings(BaseSettings):
         read, so a developer's shell can't change a test.
         """
         return _ExplicitSettings.model_validate(
-            {"environment": Environment.TEST, **values}
+            {
+                "environment": Environment.TEST,
+                "database_url": UNUSED_DATABASE_URL,
+                **values,
+            }
         )
 
     @classmethod
@@ -126,19 +174,54 @@ class Settings(BaseSettings):
         It needs no variables and no secrets, and never reads the environment.
         """
         return _ExplicitSettings.model_validate(
-            {"environment": Environment.DEVELOPMENT}
+            {
+                "environment": Environment.DEVELOPMENT,
+                "database_url": UNUSED_DATABASE_URL,
+            }
         )
 
 
-class _ExplicitSettings(Settings):
+class MigrationSettings(BaseSettings):
     """
-    Settings built only from the values passed in, never the environment.
+    The migration task's configuration, read by Alembic's `env.py` only.
 
-    An unknown value is an error here, so a misspelled field in a test fails
-    instead of silently keeping the default.
+    It holds the owner role's credentials, so the services never read it, and
+    `Settings` has no field for any of its `TALLY_MIGRATION_` variables.
     """
 
-    model_config = SettingsConfigDict(extra="forbid")
+    model_config = SettingsConfigDict(
+        env_prefix=_ENV_PREFIX,
+        extra="ignore",
+        frozen=True,
+    )
+
+    # Decides whether the owner's connection must verify the server.
+    environment: Environment
+    # The owner role's connection, which runs the DDL and makes every grant.
+    migration_database_url: SecretStr
+    migration_lock_timeout: Annotated[int, Field(ge=1)] = 5
+
+    @field_validator("migration_database_url")
+    @classmethod
+    def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
+        return _check_database_url(value, info.data.get("environment"))
+
+    @classmethod
+    def for_tests(cls, **values: object) -> MigrationSettings:
+        """Return migration settings built only from `values`, never the environment."""
+        return _ExplicitMigrationSettings.model_validate(
+            {"environment": Environment.TEST, **values}
+        )
+
+
+class _FromValuesOnly(BaseSettings):
+    """
+    A mixin for settings built only from the values passed in.
+
+    Each subclass sets `extra="forbid"` itself, because pydantic merges the
+    bases' configs in order and the settings model's own would win.
+    """
 
     @classmethod
     @override
@@ -151,6 +234,50 @@ class _ExplicitSettings(Settings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (init_settings,)
+
+
+class _ExplicitSettings(_FromValuesOnly, Settings):
+    """
+    Settings built only from the values passed in, never the environment.
+
+    An unknown value is an error here, so a misspelled field in a test fails
+    instead of silently keeping the default.
+    """
+
+    model_config = SettingsConfigDict(extra="forbid")
+
+
+class _ExplicitMigrationSettings(_FromValuesOnly, MigrationSettings):
+    """Migration settings built only from the values passed in, as above."""
+
+    model_config = SettingsConfigDict(extra="forbid")
+
+
+def _check_database_url(value: SecretStr, environment: object) -> SecretStr:
+    """
+    Return `value` if it is a SQLAlchemy URL for asyncpg, else raise.
+
+    SQLAlchemy's own parser decides, so the engine accepts exactly what settings
+    accepted. Its errors quote the URL, password and all, so none is chained.
+    In a deployed `environment`, the URL must also verify the server, and
+    connect to the host it names before its path. An invalid environment is
+    reported on its own, so the URL isn't held to it.
+    """
+    try:
+        url = make_url(value.get_secret_value())
+    except ArgumentError, ValueError:
+        raise ValueError(_NOT_A_DATABASE_URL) from None
+    if (
+        url.drivername != _DATABASE_DRIVER
+        or url.host in {None, ""}
+        or url.database in {None, ""}
+    ):
+        raise ValueError(_NOT_A_DATABASE_URL)
+    if environment in _DEPLOYED and url.query.get("ssl") != _VERIFIED_SSL:
+        raise ValueError(_NOT_VERIFIED)
+    if environment in _DEPLOYED and "host" in url.query:
+        raise ValueError(_HOST_PARAMETER)
+    return value
 
 
 def _list_parts(value: object) -> Sequence[object] | None:
@@ -235,24 +362,35 @@ def load_settings() -> Settings:
     names each failing variable and its error type. The line is built from
     each error's location and type only, so no value, secret or not, appears.
     """
+    return _load(Settings)
+
+
+def load_migration_settings() -> MigrationSettings:
+    """Read the migration settings from the environment, as `load_settings` does."""
+    return _load(MigrationSettings)
+
+
+def _load[ModelT: BaseSettings](model: type[ModelT]) -> ModelT:
+    """Build `model` from the environment, or exit naming each bad variable."""
     try:
-        return Settings()
+        return model()
     except ValidationError as error:
         problems = [
-            (_location_variable(detail["loc"]), detail["type"])
+            (_location_variable(model, detail["loc"]), detail["type"])
             for detail in error.errors()
         ]
     except SettingsError as error:
-        problems = [(_location_variable((parse_error_field(error),)), "parse_error")]
+        location = (parse_error_field(error),)
+        problems = [(_location_variable(model, location), "parse_error")]
     raise SystemExit(_describe(problems)) from None
 
 
 def variable_name(field: str) -> str:
     """
-    Return the environment variable that sets the `Settings` field `field`.
+    Return the environment variable that sets the settings field `field`.
 
-    `Settings` fields have no aliases, which a test checks, so the variable is
-    always the prefix plus the field's name.
+    Neither settings model's fields have aliases, which a test checks, so the
+    variable is always the prefix plus the field's name.
     """
     return f"{_ENV_PREFIX}{field.upper()}"
 
@@ -263,10 +401,12 @@ def parse_error_field(error: SettingsError) -> str:
     return "" if match is None else match.group("field")
 
 
-def _location_variable(location: tuple[int | str, ...]) -> str:
+def _location_variable(
+    model: type[BaseSettings], location: tuple[int | str, ...]
+) -> str:
     """Return the environment variable for a validation error's location."""
     field = str(location[0]) if len(location) > 0 else ""
-    if field not in Settings.model_fields:
+    if field not in model.model_fields:
         return f"{_ENV_PREFIX}<UNKNOWN>"
     return variable_name(field)
 

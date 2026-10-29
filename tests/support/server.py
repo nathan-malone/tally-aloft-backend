@@ -1,17 +1,19 @@
+import asyncio
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING
 
 import httpx
 
+from tally_aloft.bootstrap.settings import UNUSED_DATABASE_URL
 from tests.support.paths import ROOT
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import AsyncGenerator, Generator, Mapping
     from typing import IO
 
 API_APP = "tally_aloft.main:app"
@@ -21,6 +23,12 @@ STARTUP_TIMEOUT_SECONDS = 60
 # How long a terminated server may take to exit. Windows tears processes down
 # one after another, so under a parallel test run this takes seconds.
 STOP_TIMEOUT_SECONDS = 60
+# The fewest variables the API starts with. The routes these servers answer
+# never touch the database, so the URL that refuses connections will do.
+REQUIRED_SETTINGS = {
+    "TALLY_ENVIRONMENT": "test",
+    "TALLY_DATABASE_URL": UNUSED_DATABASE_URL,
+}
 
 
 def without_tally_variables(environ: Mapping[str, str]) -> dict[str, str]:
@@ -35,6 +43,29 @@ def free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
+
+
+@asynccontextmanager
+async def silent_server() -> AsyncGenerator[int]:
+    """
+    Yield the port of a local server that accepts connections and never answers.
+
+    It stands in for a stalled database, which a client only escapes through
+    its own timeout.
+    """
+    writers: list[asyncio.StreamWriter] = []
+
+    async def hold(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writers.append(writer)
+
+    server = await asyncio.start_server(hold, "127.0.0.1", 0)
+    try:
+        yield int(server.sockets[0].getsockname()[1])
+    finally:
+        server.close()
+        for writer in writers:
+            writer.close()
+        await server.wait_closed()
 
 
 def uvicorn_command(app: str, port: int) -> list[str]:

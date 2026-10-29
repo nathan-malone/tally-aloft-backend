@@ -31,8 +31,11 @@ FROM python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 
 WORKDIR /app
-# Only the virtual environment ships: no source tree, tests, uv or .env.
+# Only the virtual environment and the migrations ship: no source tree, tests,
+# uv or .env. `alembic upgrade head`, run from /app, is the migration command.
 COPY --from=builder /app/.venv /app/.venv
+COPY alembic.ini ./
+COPY migrations ./migrations
 ENV PATH="/app/.venv/bin:$PATH"
 
 USER 10001

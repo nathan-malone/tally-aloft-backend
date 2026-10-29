@@ -1,4 +1,5 @@
 import re
+import subprocess
 
 import pytest
 
@@ -103,7 +104,8 @@ def test_only_the_lock_targets_may_rewrite_the_lock() -> None:
         command
         for target in targets()
         if target not in {"help", "packages.lock", "packages.update"}
-        for command in dry_run(target)
+        # migrations.create stops without a NAME; every other target ignores it.
+        for command in dry_run(target, "NAME=probe")
         if command.startswith(("uv ", "pnpm "))
     ]
 
@@ -128,3 +130,22 @@ def test_image_build_targets_the_platform_only_when_given() -> None:
 
     assert "--platform linux/arm64 -t backend:ci" in cross
     assert "--platform" not in native
+
+
+def test_migrations_create_names_the_migration() -> None:
+    [create] = dry_run("migrations.create", "NAME=add flights")
+
+    assert create.endswith('alembic revision --autogenerate -m "add flights"')
+
+
+def test_migrations_create_needs_a_name() -> None:
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        dry_run("migrations.create")
+
+    assert "NAME is required" in error.value.stderr
+
+
+def test_containers_down_passes_arguments_to_compose() -> None:
+    [down] = dry_run("containers.down", "ARGS=--volumes")
+
+    assert down.endswith("down --volumes")
