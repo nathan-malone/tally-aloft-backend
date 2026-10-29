@@ -12,6 +12,7 @@ from tests.support.postgres import (
     truncate_tables,
 )
 from tests.support.tables import create_test_tables
+from tests.support.valkey import ValkeyServer, flush, running_valkey
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterator
@@ -52,3 +53,22 @@ async def fresh_database(
     """An empty database owned by the owner role, with no migrations applied."""
     async with temporary_database(postgres_server) as fresh:
         yield fresh
+
+
+@pytest.fixture(scope="session")
+def valkey_server() -> Iterator[ValkeyServer]:
+    """
+    Start one Valkey per test worker, on first use only.
+
+    Tests that write take `valkey_url` instead, which empties it after each test.
+    Tests that use it need Docker, so they're marked `container`.
+    """
+    with running_valkey() as server:
+        yield server
+
+
+@pytest.fixture
+async def valkey_url(valkey_server: ValkeyServer) -> AsyncGenerator[str]:
+    """The shared Valkey's URL: every key is deleted after the test."""
+    yield valkey_server.url
+    await flush(valkey_server.url)

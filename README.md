@@ -43,7 +43,7 @@ make migrations.apply
 make api.run
 ```
 
-`make datastores.up` starts Postgres in a container, on `127.0.0.1:5432`, so nothing else may use that port. `make migrations.apply` brings its database up to the latest migration. Then open <http://127.0.0.1:8000/readyz>, which answers `200` when the API can reach Postgres. Stop the server with Ctrl+C.
+`make datastores.up` starts Postgres and Valkey in containers, on `127.0.0.1:5432` and `127.0.0.1:6379`, so nothing else may use those ports. `make migrations.apply` brings its database up to the latest migration. Then open <http://127.0.0.1:8000/readyz>, which answers `200` when the API can reach Postgres and Valkey. Stop the server with Ctrl+C.
 
 `.env` is git-ignored. Edit it to change your local settings. `make api.run` and the migration targets load it with `uv run --env-file`, and the app itself never reads it.
 
@@ -53,7 +53,7 @@ make api.run
 make containers.up
 ```
 
-This builds the image from the `Dockerfile`, starts Postgres, runs the migrations in a `migrate` container once Postgres is healthy, and then starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
 
 The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
 
@@ -110,7 +110,8 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_DATABASE_POOL_SIZE` | Connections each process keeps in its pool, at least 1. | `5` | no |
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |
 | `TALLY_DATABASE_STATEMENT_TIMEOUT` | Seconds a statement may run before Postgres cancels it, at least 1. | `30` | no |
-| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in the same format and with the same `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
+| `TALLY_VALKEY_URL` | The cache's Valkey: `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, with reserved characters in the user and password percent-encoded and no query. In `staging` and `production` it must be `rediss://` and carry a password: an AUTH token (`rediss://:token@host`) or a user's. Secret. | none | yes |
+| `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in `TALLY_DATABASE_URL`'s format and with its `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 
 Only the migration command reads the `TALLY_MIGRATION_*` variables, so the services never get the owner role's credentials. On the host they share `.env` with the rest, for convenience; in Compose's `app` profile and in AWS only the migration task gets them.

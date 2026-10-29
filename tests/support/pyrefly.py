@@ -24,7 +24,7 @@ def pyrefly(*, source: str, filename: str) -> subprocess.CompletedProcess[str]:
         config = Path(directory) / PYREFLY_TOML.name
         _ = config.write_text(PYREFLY_TOML.read_text())
         file = Path(directory) / filename
-        file.parent.mkdir(parents=True)
+        file.parent.mkdir(parents=True, exist_ok=True)
         _ = file.write_text(source)
         return subprocess.run(
             [get_pyrefly_bin(), "check", "--config", str(config), str(file)],

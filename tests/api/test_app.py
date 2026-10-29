@@ -9,6 +9,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http.errors import UnhandledErrorMiddleware
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
+from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
 from tally_aloft.application.registry import UseCases
 from tally_aloft.application.shared.check_readiness import CheckReadiness
 from tally_aloft.bootstrap.app import create_app
@@ -38,7 +39,8 @@ async def test_lifespan_sets_the_use_cases() -> None:
         assert isinstance(use_cases, UseCases)
         assert isinstance(use_cases.check_readiness, CheckReadiness)
         checks = use_cases.check_readiness.checks
-        assert [type(check) for check in checks] == [PostgresCheck]
+        assert [type(check) for check in checks] == [PostgresCheck, ValkeyCheck]
+        assert [check.name for check in checks] == ["postgres", "cache"]
 
 
 async def test_livez_returns_200_and_is_not_in_the_schema() -> None:

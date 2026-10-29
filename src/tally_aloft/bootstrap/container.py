@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
+from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
 from tally_aloft.application.registry import UseCases
 from tally_aloft.application.shared.check_readiness import CheckReadiness
 
@@ -46,4 +47,7 @@ def build_use_cases(
 
 def _dependency_checks(resources: Resources) -> tuple[DependencyCheck, ...]:
     """Return the real readiness checks, one per data store."""
-    return (PostgresCheck(resources.engine),)
+    return (
+        PostgresCheck(resources.engine),
+        ValkeyCheck(resources.cache_client, name="cache"),
+    )
