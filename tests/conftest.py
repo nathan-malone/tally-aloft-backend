@@ -60,7 +60,7 @@ def valkey_server() -> Iterator[ValkeyServer]:
     """
     Start one Valkey per test worker, on first use only.
 
-    Tests that write take `valkey` instead, which empties it after each test.
+    Tests that write take `valkey_url` instead, which empties it after each test.
     Tests that use it need Docker, so they're marked `container`.
     """
     with running_valkey() as server:
@@ -68,7 +68,7 @@ def valkey_server() -> Iterator[ValkeyServer]:
 
 
 @pytest.fixture
-async def valkey(valkey_server: ValkeyServer) -> AsyncGenerator[str]:
+async def valkey_url(valkey_server: ValkeyServer) -> AsyncGenerator[str]:
     """The shared Valkey's URL: every key is deleted after the test."""
     yield valkey_server.url
     await flush(valkey_server.url)

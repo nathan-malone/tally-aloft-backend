@@ -37,8 +37,8 @@ _ENCRYPTED_VALKEY_SCHEME = "rediss"
 _VALKEY_DATABASE_PATH = re.compile(r"(/[0-9]*)?")
 _NOT_A_VALKEY_URL = (
     "must be a redis:// or rediss://[user:password@]host[:port][/database] "
-    "URL, with no query, and reserved characters in the user and password "
-    "percent-encoded"
+    "URL, with a numbered database if any, no query or fragment, and reserved "
+    "characters in the user and password percent-encoded"
 )
 _NOT_ENCRYPTED = "must be a rediss:// URL in staging and production"
 

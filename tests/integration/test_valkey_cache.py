@@ -13,8 +13,10 @@ from tests.support.valkey import running_valkey
 
 
 @pytest.mark.container
-async def test_set_stores_the_value_under_the_prefix_with_a_ttl(valkey: str) -> None:
-    client = build_client(valkey)
+async def test_set_stores_the_value_under_the_prefix_with_a_ttl(
+    valkey_url: str,
+) -> None:
+    client = build_client(valkey_url)
     try:
         await ValkeyCache(client).set("k", b"v", timedelta(seconds=10))
         stored = await client.get("cache:k")

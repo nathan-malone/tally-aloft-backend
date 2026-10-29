@@ -40,8 +40,8 @@ def fake_case() -> CacheCase:
 
 
 @pytest.fixture
-async def valkey_case(valkey: str) -> AsyncGenerator[CacheCase]:
-    client = build_client(valkey)
+async def valkey_case(valkey_url: str) -> AsyncGenerator[CacheCase]:
+    client = build_client(valkey_url)
 
     async def tick() -> None:
         await asyncio.sleep(0.05)
@@ -50,6 +50,8 @@ async def valkey_case(valkey: str) -> AsyncGenerator[CacheCase]:
     await client.aclose()
 
 
+# Parametrized by fixture name, because the Valkey case is an async fixture
+# and pytest can't parametrize over fixtures directly.
 @pytest.fixture(
     params=["fake_case", pytest.param("valkey_case", marks=pytest.mark.container)]
 )
@@ -111,3 +113,15 @@ async def test_a_ttl_under_a_millisecond_is_rejected(
         await case.cache.set("k", b"v", ttl)
 
     assert await case.cache.get("k") is None
+
+
+async def test_the_fake_expires_a_value_exactly_at_its_ttl() -> None:
+    # Only the fake's time is exact, so only the fake can be held to the boundary.
+    time = ManualTime()
+    cache = FakeCache(now=time.now)
+    await cache.set("k", b"v", TTL)
+
+    time.advance(TTL - timedelta(milliseconds=1))
+    assert await cache.get("k") == b"v"
+    time.advance(timedelta(milliseconds=1))
+    assert await cache.get("k") is None

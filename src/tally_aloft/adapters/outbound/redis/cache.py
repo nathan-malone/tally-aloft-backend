@@ -26,7 +26,8 @@ class ValkeyCache:
             value = await self.client.get(_KEY_PREFIX + key)
         except RedisError as error:
             raise CacheUnavailableError from error
-        # The client never decodes replies, so a value is always bytes.
+        # The client never decodes replies (tests/unit/adapters/test_redis_client.py
+        # pins it), so a value is always bytes.
         return value if isinstance(value, bytes) else None
 
     async def set(self, key: str, value: bytes, ttl: timedelta) -> None:

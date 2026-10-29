@@ -3,10 +3,11 @@ from redis.backoff import NoBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from tally_aloft.adapters.outbound.redis.client import TIMEOUT_SECONDS, build_client
+from tally_aloft.bootstrap.settings import UNUSED_VALKEY_URL
 
 
 async def test_the_client_times_out_and_retries_only_a_dropped_connection() -> None:
-    client = build_client("redis://127.0.0.1:9/0")
+    client = build_client(UNUSED_VALKEY_URL)
     try:
         options = client.connection_pool.connection_kwargs
     finally:
