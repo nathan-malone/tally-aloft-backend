@@ -23,6 +23,11 @@ API_COMMAND = [
     "25",
 ]
 MAX_UNCOMPRESSED_BYTES = 400 * 1000 * 1000
+# What redis-py does for a rediss:// URL: Python's default context, which
+# loads the system CA store.
+CA_COUNT = (
+    "import ssl; print(ssl.create_default_context().cert_store_stats()['x509_ca'])"
+)
 NO_TESTS = (
     "import importlib.util, pathlib; "
     "print(pathlib.Path('/app/tests').exists(), "
@@ -68,6 +73,14 @@ def test_contains_no_tests(
     docker_client: docker.DockerClient, api_image: Image
 ) -> None:
     assert _run(docker_client, api_image, ["python", "-c", NO_TESTS]) == "False False"
+
+
+def test_trusts_the_system_ca_store(
+    docker_client: docker.DockerClient, api_image: Image
+) -> None:
+    # rediss:// verifies Valkey's certificate against it, so a base image
+    # without ca-certificates would fail only at the first connection.
+    assert int(_run(docker_client, api_image, ["python", "-c", CA_COUNT])) > 0
 
 
 def test_ships_the_migrations(

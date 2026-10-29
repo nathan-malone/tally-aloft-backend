@@ -20,8 +20,11 @@ from pydantic_settings import (
     SettingsConfigDict,
     SettingsError,
 )
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+
+from tally_aloft.bootstrap.connection_urls import (
+    check_database_url,
+    check_valkey_url,
+)
 
 _ENV_PREFIX = "TALLY_"
 # pydantic-settings 2.16 words a parse error as `error parsing value for field
@@ -43,23 +46,11 @@ _NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
 # with one, and decodes a percent-encoded one, so it never sends either form.
 _FORBIDDEN_DOMAIN_CHARACTER = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 
-_DATABASE_DRIVER = "postgresql+asyncpg"
-_NOT_A_DATABASE_URL = (
-    "must be a postgresql+asyncpg://user:password@host:port/database URL, with "
-    "reserved characters in the user and password percent-encoded"
-)
-# asyncpg's `require` encrypts without checking the server, and `verify-ca`
-# checks the certificate but not the host name, so deployments need
-# `verify-full`. asyncpg reads the CA bundle from PGSSLROOTCERT.
-_VERIFIED_SSL = "verify-full"
-_NOT_VERIFIED = "must end in ?ssl=verify-full in staging and production"
-# A `host` parameter replaces the URL's host, and asyncpg reads one starting
-# with `/` as a Unix socket, which it connects to without TLS.
-_HOST_PARAMETER = "must not have a host parameter in staging and production"
 # For profiles and tests that never connect. Port 9 on localhost refuses
 # connections, so a stray one fails at once instead of reaching a developer's
-# database.
+# data stores.
 UNUSED_DATABASE_URL = "postgresql+asyncpg://unused@127.0.0.1:9/unused"
+UNUSED_VALKEY_URL = "redis://127.0.0.1:9/0"
 
 
 class Environment(StrEnum):
@@ -71,7 +62,8 @@ class Environment(StrEnum):
     PRODUCTION = "production"
 
 
-# The deployments whose database connections must verify the server.
+# The deployments whose data store connections must be encrypted and verify
+# the server.
 _DEPLOYED = frozenset({Environment.STAGING, Environment.PRODUCTION})
 
 
@@ -112,11 +104,21 @@ class Settings(BaseSettings):
     database_max_overflow: Annotated[int, Field(ge=0)] = 5
     database_statement_timeout: Annotated[int, Field(ge=1)] = 30
 
+    # The Valkey the cache uses. The broker shares the instance, under its own
+    # keys.
+    valkey_url: SecretStr
+
     @field_validator("database_url")
     @classmethod
     def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
         """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
-        return _check_database_url(value, info.data.get("environment"))
+        return check_database_url(value, deployed=_deployed(info))
+
+    @field_validator("valkey_url")
+    @classmethod
+    def _parse_valkey_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        """Accept only a redis:// or rediss:// URL, with TLS when deployed."""
+        return check_valkey_url(value, deployed=_deployed(info))
 
     @field_validator("forwarded_allow_ips", mode="before")
     @classmethod
@@ -162,6 +164,7 @@ class Settings(BaseSettings):
             {
                 "environment": Environment.TEST,
                 "database_url": UNUSED_DATABASE_URL,
+                "valkey_url": UNUSED_VALKEY_URL,
                 **values,
             }
         )
@@ -177,6 +180,7 @@ class Settings(BaseSettings):
             {
                 "environment": Environment.DEVELOPMENT,
                 "database_url": UNUSED_DATABASE_URL,
+                "valkey_url": UNUSED_VALKEY_URL,
             }
         )
 
@@ -205,7 +209,7 @@ class MigrationSettings(BaseSettings):
     @classmethod
     def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
         """Accept only a SQLAlchemy URL for asyncpg, verified when deployed."""
-        return _check_database_url(value, info.data.get("environment"))
+        return check_database_url(value, deployed=_deployed(info))
 
     @classmethod
     def for_tests(cls, **values: object) -> MigrationSettings:
@@ -253,31 +257,13 @@ class _ExplicitMigrationSettings(_FromValuesOnly, MigrationSettings):
     model_config = SettingsConfigDict(extra="forbid")
 
 
-def _check_database_url(value: SecretStr, environment: object) -> SecretStr:
+def _deployed(info: ValidationInfo) -> bool:
     """
-    Return `value` if it is a SQLAlchemy URL for asyncpg, else raise.
+    Return whether the model's environment is a deployed one.
 
-    SQLAlchemy's own parser decides, so the engine accepts exactly what settings
-    accepted. Its errors quote the URL, password and all, so none is chained.
-    In a deployed `environment`, the URL must also verify the server, and
-    connect to the host it names before its path. An invalid environment is
-    reported on its own, so the URL isn't held to it.
+    An invalid environment is reported on its own, so a URL isn't held to it.
     """
-    try:
-        url = make_url(value.get_secret_value())
-    except ArgumentError, ValueError:
-        raise ValueError(_NOT_A_DATABASE_URL) from None
-    if (
-        url.drivername != _DATABASE_DRIVER
-        or url.host in {None, ""}
-        or url.database in {None, ""}
-    ):
-        raise ValueError(_NOT_A_DATABASE_URL)
-    if environment in _DEPLOYED and url.query.get("ssl") != _VERIFIED_SSL:
-        raise ValueError(_NOT_VERIFIED)
-    if environment in _DEPLOYED and "host" in url.query:
-        raise ValueError(_HOST_PARAMETER)
-    return value
+    return info.data.get("environment") in _DEPLOYED
 
 
 def _list_parts(value: object) -> Sequence[object] | None:

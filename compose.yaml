@@ -82,8 +82,11 @@ services:
       TALLY_ENVIRONMENT: development
       TALLY_FORWARDED_ALLOW_IPS: 127.0.0.1
       TALLY_DATABASE_URL: postgresql+asyncpg://tally_aloft_app:tally_aloft_app@postgres:5432/tally_aloft
+      TALLY_VALKEY_URL: redis://valkey:6379/0
     depends_on:
       postgres:
+        condition: service_healthy
+      valkey:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully

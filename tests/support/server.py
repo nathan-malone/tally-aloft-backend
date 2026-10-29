@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from tally_aloft.bootstrap.settings import UNUSED_DATABASE_URL
+from tally_aloft.bootstrap.settings import UNUSED_DATABASE_URL, UNUSED_VALKEY_URL
 from tests.support.paths import ROOT
 
 if TYPE_CHECKING:
@@ -24,10 +24,11 @@ STARTUP_TIMEOUT_SECONDS = 60
 # one after another, so under a parallel test run this takes seconds.
 STOP_TIMEOUT_SECONDS = 60
 # The fewest variables the API starts with. The routes these servers answer
-# never touch the database, so the URL that refuses connections will do.
+# never touch the data stores, so URLs that refuse connections will do.
 REQUIRED_SETTINGS = {
     "TALLY_ENVIRONMENT": "test",
     "TALLY_DATABASE_URL": UNUSED_DATABASE_URL,
+    "TALLY_VALKEY_URL": UNUSED_VALKEY_URL,
 }
 
 

@@ -22,8 +22,17 @@ from tests.support.server import (
         ("TALLY_CORS_ORIGINS", "*"),
         ("TALLY_DATABASE_URL", "not-a-url"),
         ("TALLY_DATABASE_URL", None),
+        ("TALLY_VALKEY_URL", "redis://cache.example/0?ssl_cert_reqs=none"),
+        ("TALLY_VALKEY_URL", None),
     ],
-    ids=["forwarded-allow-ips", "cors-origins", "database-url", "no-database-url"],
+    ids=[
+        "forwarded-allow-ips",
+        "cors-origins",
+        "database-url",
+        "no-database-url",
+        "valkey-url",
+        "no-valkey-url",
+    ],
 )
 def test_invalid_settings_stop_the_api_before_it_serves(
     variable: str, value: str | None

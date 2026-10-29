@@ -86,9 +86,12 @@ def test_api_never_gets_the_owner_role(api_service: Service) -> None:
     assert [v for v in variables if v.startswith("TALLY_MIGRATION_")] == []
 
 
-def test_api_starts_after_the_migrations(api_service: Service) -> None:
+def test_api_starts_after_the_data_stores_and_the_migrations(
+    api_service: Service,
+) -> None:
     assert _depends_on(api_service) == {
         "postgres": "service_healthy",
+        "valkey": "service_healthy",
         "migrate": "service_completed_successfully",
     }
 
