@@ -7,8 +7,6 @@
 #
 #   make containers.up    (docker compose --profile app up --build)
 #   make containers.down ARGS=--volumes    (also deletes the database)
-#
-# Valkey joins the data stores in a later story.
 name: tally-aloft-backend
 
 services:
@@ -39,6 +37,23 @@ services:
         - postgres
         - --dbname
         - tally_aloft
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  valkey:
+    # The one place Compose's Valkey version is set; tests/support/valkey.py
+    # sets the tests' to the same, and a tooling test checks they match.
+    image: valkey/valkey:9
+    # The broker's streams have no TTL, so Valkey must never evict keys to make
+    # room; production may use a volatile-* policy, which spares them too.
+    command: ["valkey-server", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3

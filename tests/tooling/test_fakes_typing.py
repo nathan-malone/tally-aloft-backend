@@ -1,54 +1,91 @@
-import subprocess
-import sys
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
-from tests.support.paths import PYREFLY_TOML
+import pytest
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from tests.support.pyrefly import pyrefly
 
 PROBE = """\
-from tally_aloft.application.ports.health import DependencyCheck
+{imports}
 
 
 class Probe:
-    name = "probe"
-
-    async def check(self{parameters}) -> None:
-        return None
+{body}
 
 
-_check: DependencyCheck = Probe()
+_probe: {port} = Probe()
 """
 
 
-def _pyrefly(tmp_path: Path, parameters: str) -> subprocess.CompletedProcess[str]:
-    probe = tmp_path / "probe.py"
-    probe.write_text(PROBE.format(parameters=parameters))
-    return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pyrefly",
-            "check",
-            "--config",
-            str(PYREFLY_TOML),
-            str(probe),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+@dataclass(frozen=True, slots=True)
+class PortCase:
+    """A port, a probe class that matches it, and one that drifts from it."""
+
+    imports: str
+    port: str
+    matching: str
+    drifted: str
+
+    def source(self, body: str) -> str:
+        return PROBE.format(imports=self.imports, port=self.port, body=body)
 
 
-def test_a_fake_matching_its_port_passes(tmp_path: Path) -> None:
-    result = _pyrefly(tmp_path, "")
+CASES = [
+    pytest.param(
+        PortCase(
+            imports="from tally_aloft.application.ports.health import DependencyCheck",
+            port="DependencyCheck",
+            matching="""\
+    name = "probe"
+
+    async def check(self) -> None:
+        return None""",
+            drifted="""\
+    name = "probe"
+
+    async def check(self, timeout: float) -> None:
+        return None""",
+        ),
+        id="DependencyCheck",
+    ),
+    pytest.param(
+        PortCase(
+            imports="from datetime import timedelta\n\n"
+            "from tally_aloft.application.ports.cache import Cache",
+            port="Cache",
+            matching="""\
+    async def get(self, key: str) -> bytes | None:
+        return None
+
+    async def set(self, key: str, value: bytes, ttl: timedelta) -> None:
+        return None
+
+    async def delete(self, key: str) -> None:
+        return None""",
+            drifted="""\
+    async def get(self, key: str) -> bytes | None:
+        return None
+
+    async def set(self, key: str, value: bytes) -> None:
+        return None
+
+    async def delete(self, key: str) -> None:
+        return None""",
+        ),
+        id="Cache",
+    ),
+]
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_a_fake_matching_its_port_passes(case: PortCase) -> None:
+    result = pyrefly(source=case.source(case.matching), filename="probe.py")
 
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_a_fake_that_drifts_from_its_port_fails(tmp_path: Path) -> None:
-    result = _pyrefly(tmp_path, ", timeout: float")
+@pytest.mark.parametrize("case", CASES)
+def test_a_fake_that_drifts_from_its_port_fails(case: PortCase) -> None:
+    result = pyrefly(source=case.source(case.drifted), filename="probe.py")
 
     assert result.returncode != 0
     assert "bad-assignment" in result.stdout + result.stderr

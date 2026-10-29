@@ -43,7 +43,7 @@ make migrations.apply
 make api.run
 ```
 
-`make datastores.up` starts Postgres in a container, on `127.0.0.1:5432`, so nothing else may use that port. `make migrations.apply` brings its database up to the latest migration. Then open <http://127.0.0.1:8000/readyz>, which answers `200` when the API can reach Postgres. Stop the server with Ctrl+C.
+`make datastores.up` starts Postgres and Valkey in containers, on `127.0.0.1:5432` and `127.0.0.1:6379`, so nothing else may use those ports. `make migrations.apply` brings its database up to the latest migration. Then open <http://127.0.0.1:8000/readyz>, which answers `200` when the API can reach Postgres. Stop the server with Ctrl+C.
 
 `.env` is git-ignored. Edit it to change your local settings. `make api.run` and the migration targets load it with `uv run --env-file`, and the app itself never reads it.
 
@@ -53,7 +53,7 @@ make api.run
 make containers.up
 ```
 
-This builds the image from the `Dockerfile`, starts Postgres, runs the migrations in a `migrate` container once Postgres is healthy, and then starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
 
 The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
 

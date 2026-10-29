@@ -8,6 +8,7 @@ from tally_aloft.bootstrap.settings import MigrationSettings, Settings, variable
 from tests.support.containers import docker_cli
 from tests.support.paths import ROOT
 from tests.support.postgres import POSTGRES_IMAGE
+from tests.support.valkey import VALKEY_IMAGE
 
 pytestmark = pytest.mark.container
 
@@ -134,3 +135,30 @@ def test_migrate_runs_the_migrations_once_postgres_is_healthy(
     assert migrate["command"] == ["alembic", "upgrade", "head"]
     assert _required_variables(MigrationSettings) <= _environment(migrate).keys()
     assert _depends_on(migrate) == {"postgres": "service_healthy"}
+
+
+def test_valkey_runs_outside_the_profiles_on_the_tests_version(
+    services: dict[str, Service],
+) -> None:
+    valkey = services["valkey"]
+
+    assert "profiles" not in valkey
+    assert valkey["image"] == VALKEY_IMAGE
+
+
+def test_valkey_port_is_published_on_localhost_only(
+    services: dict[str, Service],
+) -> None:
+    assert _ports(services["valkey"]) == [("127.0.0.1", "6379", 6379)]
+
+
+def test_valkey_health_check_pings_it(services: dict[str, Service]) -> None:
+    healthcheck = cast("dict[str, object]", services["valkey"]["healthcheck"])
+
+    assert healthcheck["test"] == ["CMD", "valkey-cli", "ping"]
+
+
+def test_valkey_never_evicts_keys(services: dict[str, Service]) -> None:
+    command = cast("list[str]", services["valkey"]["command"])
+
+    assert command[command.index("--maxmemory-policy") + 1] == "noeviction"
