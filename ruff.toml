@@ -25,7 +25,16 @@ ignore = [
     "PLR2004", # Tests compare against literal expected values.
     "S101",    # pytest checks with assert.
     "S603",    # Tests run the project's tools as subprocesses with fixed arguments.
+    "TID251",  # Tests may read real time, to check the system clock against it.
 ]
+
+# Production code reads the time only through the Clock port, so a use case
+# can't read the system clock behind a test's fake.
+[lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "Read the time through the Clock port."
+"datetime.datetime.utcnow".msg = "Read the time through the Clock port."
+"datetime.date.today".msg = "Read the time through the Clock port."
+"time.time".msg = "Read the time through the Clock port; use time.monotonic for durations."
 
 [lint.flake8-type-checking]
 # Pydantic evaluates these classes' annotations at runtime, so their imports

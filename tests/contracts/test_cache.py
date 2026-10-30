@@ -8,7 +8,7 @@ import pytest
 from tally_aloft.adapters.outbound.redis.cache import ValkeyCache
 from tally_aloft.adapters.outbound.redis.client import build_client
 from tests.fakes.cache import FakeCache
-from tests.support.manual_time import ManualTime
+from tests.fakes.clock import FakeClock
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -31,7 +31,7 @@ class CacheCase:
 
 @pytest.fixture
 def fake_case() -> CacheCase:
-    time = ManualTime()
+    time = FakeClock()
 
     async def tick() -> None:
         time.advance(timedelta(milliseconds=100))
@@ -117,7 +117,7 @@ async def test_a_ttl_under_a_millisecond_is_rejected(
 
 async def test_the_fake_expires_a_value_exactly_at_its_ttl() -> None:
     # Only the fake's time is exact, so only the fake can be held to the boundary.
-    time = ManualTime()
+    time = FakeClock()
     cache = FakeCache(now=time.now)
     await cache.set("k", b"v", TTL)
 

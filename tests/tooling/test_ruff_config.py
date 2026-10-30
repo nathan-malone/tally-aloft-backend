@@ -119,3 +119,26 @@ def test_multi_line_summary_on_the_opening_line_fails() -> None:
 
     assert result.returncode == 1
     assert "D213" in result.stdout
+
+
+READS_THE_CLOCK = _source(
+    "from datetime import UTC, datetime",
+    "",
+    "",
+    "def probe() -> datetime:",
+    '    """Return the time."""',
+    "    return datetime.now(UTC)",
+)
+
+
+def test_src_reads_the_time_only_through_the_clock_port() -> None:
+    result = _ruff_check(READS_THE_CLOCK, "src/tally_aloft/application/probe.py")
+
+    assert result.returncode == 1
+    assert "TID251" in result.stdout
+
+
+def test_tests_may_read_real_time() -> None:
+    result = _ruff_check(READS_THE_CLOCK, "tests/unit/test_probe.py")
+
+    assert result.returncode == 0, result.stdout

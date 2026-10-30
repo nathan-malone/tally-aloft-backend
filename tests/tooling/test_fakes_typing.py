@@ -73,6 +73,20 @@ CASES = [
         ),
         id="Cache",
     ),
+    pytest.param(
+        PortCase(
+            imports="from datetime import datetime\n\n"
+            "from tally_aloft.application.ports.clock import Clock",
+            port="Clock",
+            matching="""\
+    def now(self) -> datetime:
+        return datetime.min""",
+            drifted="""\
+    def now(self) -> float:
+        return 0.0""",
+        ),
+        id="Clock",
+    ),
 ]
 
 
