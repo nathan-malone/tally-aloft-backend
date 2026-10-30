@@ -24,6 +24,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
 | `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
 | `make datastores.up` | Start the local data stores in containers and wait until they're healthy |
+| `make worker.run` | Run a worker on the host, with the settings in `.env` |
 | `make migrations.apply` | Upgrade the database in `.env` to the latest migration |
 | `make migrations.create NAME="add flights"` | Write a migration for the table models' changes |
 | `make packages.outdated.show` | Show which direct dependencies have newer releases |
@@ -47,15 +48,34 @@ make api.run
 
 `.env` is git-ignored. Edit it to change your local settings. `make api.run` and the migration targets load it with `uv run --env-file`, and the app itself never reads it.
 
+To run background jobs too, start a worker in a second terminal:
+
+```
+make worker.run
+```
+
+It runs one worker process against the same Postgres and Valkey, with the settings in `.env`, and stops on Ctrl+C after waiting up to 25 seconds for running tasks. It doesn't reload when the code changes, so restart it after an edit. No feature records jobs yet, so it waits for work.
+
 ## Run everything in containers
 
 ```
 make containers.up
 ```
 
-This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only, and a `worker` with the image's worker command. The worker serves no HTTP and has no health check. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
 
 The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
+
+### End-to-end jobs
+
+The release image ships no job kind, and no feature records jobs yet, so the test-only job kinds exercise the job machinery end to end:
+
+```
+make containers.e2e.up
+make containers.e2e.job.run
+```
+
+The first is `make containers.up` with `compose.e2e.yaml`, which runs the test worker, `tests.support.worker:broker`, built from the `Dockerfile`'s `dev` stage with `tests/` included. The second, in another terminal, records a test job against the running stack and waits up to a minute for it to succeed. `make containers.down` stops it all.
 
 ## Migrations
 
