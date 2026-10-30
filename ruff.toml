@@ -37,9 +37,10 @@ ignore = [
 "time.time".msg = "Read the time through the Clock port; use time.monotonic for durations."
 
 [lint.flake8-type-checking]
-# Pydantic evaluates these classes' annotations at runtime, so their imports
-# must stay outside TYPE_CHECKING blocks.
+# Pydantic and SQLAlchemy's declarative mapping evaluate these classes'
+# annotations at runtime, so their imports must stay outside TYPE_CHECKING blocks.
 runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
     "pydantic_settings.BaseSettings",
+    "tally_aloft.adapters.outbound.postgres.tables.Base",
 ]
