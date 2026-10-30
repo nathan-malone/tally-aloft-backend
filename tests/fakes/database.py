@@ -31,8 +31,8 @@ class FakeDatabase:
     """
     Every fake table, which fake units of work read and commit to.
 
-    `clock` stands in for the database's `now()`. New fake tables join this
-    class, so the unit of work commits them without changing.
+    `clock` stands in for the database's `now()`. A new fake table joins this
+    class, and `FakeUnitOfWork` copies and writes it back as it does `jobs`.
     """
 
     clock: Clock

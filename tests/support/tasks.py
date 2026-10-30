@@ -23,7 +23,7 @@ from tests.support.jobs import TEST_JOB_TASKS
 RECORD = "probe.record"
 SLEEP = "probe.sleep"
 USE_CASES = "probe.use_cases"
-# Under the test idle_timeout of 10 seconds, with room for a 5-second sleep.
+# Under TEST_IDLE_TIMEOUT, with room for a 6-second sleep.
 PROBE_TIMEOUT = timedelta(seconds=8)
 
 # The `UseCases` each `probe.use_cases` run received, for in-process tests.

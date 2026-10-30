@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from tests.support.makefile import MAKEFILE, dry_run, make, targets
+from tests.support.worker_command import WORKER_MODULE, worker_command
 
 # Recipes run under cmd.exe as well as sh, so they hold plain commands only
 # (tally-aloft-docs/technical/make-commands.md, "Rules").
@@ -149,3 +150,9 @@ def test_containers_down_passes_arguments_to_compose() -> None:
     [down] = dry_run("containers.down", "ARGS=--volumes")
 
     assert down.endswith("down --volumes")
+
+
+def test_worker_run_runs_the_image_contracts_command_in_one_process() -> None:
+    [run] = dry_run("worker.run")
+
+    assert run.endswith(" ".join([*worker_command(WORKER_MODULE), "--workers", "1"]))

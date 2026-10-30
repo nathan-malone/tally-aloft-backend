@@ -18,19 +18,18 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tally_aloft.adapters.inbound.jobs.run_job import run_job
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
-from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.application.shared.jobs.kinds import JobKind, JobStatus
-from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM
 from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.bootstrap.worker import create_worker
 from tally_aloft.domain.shared.ids import PilotId
 from tests.support.codecs import JSON
 from tests.support.in_process_worker import eventually, running_worker
-from tests.support.jobs import ECHO, FAIL, OVERRUN, RecordTestJob
+from tests.support.jobs import ECHO, FAIL, OVERRUN, TEST_IDLE_TIMEOUT, RecordTestJob
 from tests.support.postgres import connected
 from tests.support.tasks import TEST_TASKS
 from tests.support.use_cases import job_use_cases
+from tests.support.valkey import pending
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -281,27 +280,17 @@ async def test_a_queued_job_at_max_attempts_isnt_run(
 
 
 @pytest.fixture
-async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
-    client = build_client(valkey_url)
-    yield client
-    await client.aclose()
-
-
-@pytest.fixture
 def stack(
     database: PostgresDatabase,
     valkey_url: str,
     make_uow: Callable[[], PostgresUnitOfWork],
 ) -> Stack:
     settings = Settings.for_tests(
-        database_url=database.app_url, valkey_url=valkey_url, broker_idle_timeout=10
+        database_url=database.app_url,
+        valkey_url=valkey_url,
+        broker_idle_timeout=int(TEST_IDLE_TIMEOUT.total_seconds()),
     )
     return Stack(settings, database, make_uow)
-
-
-async def _pending(valkey: Redis) -> int:
-    summary = await valkey.xpending(STREAM, CONSUMER_GROUP)
-    return int(summary["pending"])
 
 
 async def _worker_runs(
@@ -333,7 +322,7 @@ async def test_the_worker_runs_a_recorded_job_once(stack: Stack, valkey: Redis) 
     )
 
     assert (row.attempts, row.result) == (1, {"echo": {"n": 1}})
-    assert await _pending(valkey) == 0
+    assert await pending(valkey) == 0
 
 
 @pytest.mark.parametrize(
@@ -351,11 +340,11 @@ async def test_a_failed_attempt_is_queued_with_its_code_and_acknowledged(
     )
 
     assert (row.status, row.attempts, row.error_code) == (JobStatus.QUEUED, 1, code)
-    await eventually(lambda: _none_pending(valkey))
+    await eventually(lambda: _nonepending(valkey))
 
 
-async def _none_pending(valkey: Redis) -> bool:
-    return await _pending(valkey) == 0
+async def _nonepending(valkey: Redis) -> bool:
+    return await pending(valkey) == 0
 
 
 async def test_the_last_attempt_fails_the_job(stack: Stack) -> None:

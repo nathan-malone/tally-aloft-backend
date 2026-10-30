@@ -26,8 +26,10 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
     from tally_aloft.domain.shared.ids import PilotId
 
-# Short limits keep the tests fast. Each kind's time limit plus the backstop
-# stays under the test worker's 10-second idle_timeout: at most 6 + 3 seconds.
+# The test worker's idle_timeout. Every test task's timeout stays under it:
+# a job kind's time limit plus the backstop is at most 6 + 3 seconds.
+TEST_IDLE_TIMEOUT = timedelta(seconds=10)
+# Short limits keep the tests fast.
 TEST_LEASE = timedelta(seconds=2)
 TEST_TIME_LIMIT = timedelta(seconds=6)
 # Room for the claim and the outcome's write under a loaded test run.

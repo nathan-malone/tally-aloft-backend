@@ -7,9 +7,11 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Self, override
 from uuid import uuid7
 
+import anyio
 import pytest
 
 from tally_aloft.adapters.inbound.jobs.run_job import run_job
+from tally_aloft.application.shared.jobs.complete_job import CompleteJob
 from tally_aloft.application.shared.jobs.kinds import JobId, JobKind, JobStatus
 from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.clock import FakeClock
@@ -282,3 +284,58 @@ async def test_cancelling_the_wrapper_writes_nothing(
     assert cancelled.is_set()
     row = _row(database, job)
     assert (row.status, row.attempts, row.error_code) == (JobStatus.RUNNING, 1, None)
+
+
+async def test_taskiqs_backstop_stops_the_renewal_too(database: FakeDatabase) -> None:
+    job = await _recorded(database)
+    renewals: list[FakeUnitOfWork] = []
+
+    def renewal_uow() -> FakeUnitOfWork:
+        uow = FakeUnitOfWork(database)
+        renewals.append(uow)
+        return uow
+
+    use_cases = job_use_cases(
+        fake_unit_of_work_factory(database), renewal_uow=renewal_uow
+    )
+
+    async def body(_claimed: ClaimedJob[JsonValue]) -> JsonValue:
+        await asyncio.sleep(WAIT_SECONDS)
+        return None
+
+    # Taskiq cancels through anyio, which cancels again on every loop turn.
+    with pytest.raises(TimeoutError), anyio.fail_after(0.3):
+        await run_job(use_cases, KIND, body, job.id)
+    after_backstop = len(renewals)
+    await asyncio.sleep(KIND.lease.total_seconds() * 3)
+
+    assert len(renewals) == after_backstop
+    wrapper_tasks = {"_run_body", "_renew_until_lost"}
+    leftovers = [
+        task
+        for task in asyncio.all_tasks()
+        if getattr(task.get_coro(), "__name__", None) in wrapper_tasks
+    ]
+    assert leftovers == []
+    row = _row(database, job)
+    assert (row.status, row.attempts, row.error_code) == (JobStatus.RUNNING, 1, None)
+
+
+async def test_an_outcome_write_that_raises_propagates_and_leaves_the_row(
+    database: FakeDatabase,
+) -> None:
+    job = await _recorded(database)
+    working = fake_unit_of_work_factory(database)
+    use_cases = replace(
+        job_use_cases(working),
+        complete_job=CompleteJob(lambda: BrokenUnitOfWork(database)),
+    )
+
+    async def body(_claimed: ClaimedJob[JsonValue]) -> JsonValue:
+        return "done"
+
+    with pytest.raises(ConnectionError):
+        await run_job(use_cases, KIND, body, job.id)
+
+    row = _row(database, job)
+    assert (row.status, row.attempts) == (JobStatus.RUNNING, 1)

@@ -1,9 +1,16 @@
+from datetime import timedelta
+
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from tally_aloft.adapters.outbound.redis.client import TIMEOUT_SECONDS
-from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM, build_broker
+from tally_aloft.bootstrap.broker import (
+    CONSUMER_GROUP,
+    STREAM,
+    build_broker,
+    idle_timeout,
+)
 from tally_aloft.bootstrap.settings import Settings
 
 
@@ -15,6 +22,7 @@ async def test_the_broker_reads_its_names_and_limits_from_settings() -> None:
         assert broker.queue_name == STREAM == "broker:tasks"
         assert broker.consumer_group_name == CONSUMER_GROUP == "broker:workers"
         assert broker.idle_timeout == 12_000
+        assert idle_timeout(broker) == timedelta(seconds=12)
         assert broker.maxlen == 345
         assert broker.approximate is True
     finally:
@@ -29,10 +37,11 @@ async def test_the_group_starts_at_the_first_message() -> None:
         await broker.shutdown()
 
 
-async def test_a_worker_reads_one_message_at_a_time_within_the_socket_timeout() -> None:
+async def test_a_worker_reads_and_reclaims_one_message_at_a_time() -> None:
     broker = build_broker(Settings.for_tests())
     try:
         assert broker.count == 1
+        assert broker.unacknowledged_batch_size == 1
         assert broker.block < TIMEOUT_SECONDS * 1000
     finally:
         await broker.shutdown()

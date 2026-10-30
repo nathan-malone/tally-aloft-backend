@@ -15,11 +15,9 @@ import pytest
 from redis.exceptions import ResponseError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
-from taskiq.kicker import AsyncKicker
 
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
-from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.application.shared.jobs.kinds import JobStatus
 from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM, build_broker
@@ -27,10 +25,12 @@ from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.domain.shared.ids import PilotId
 from tests.support import tasks
 from tests.support.containers import from_container
-from tests.support.in_process_worker import eventually
-from tests.support.jobs import SLOW_FIRST_ATTEMPT, RecordTestJob
+from tests.support.in_process_worker import eventually, kick
+from tests.support.jobs import SLOW_FIRST_ATTEMPT, TEST_IDLE_TIMEOUT, RecordTestJob
 from tests.support.postgres import connected
 from tests.support.server import REQUIRED_SETTINGS
+from tests.support.valkey import count, pending
+from tests.support.worker_command import TEST_WORKER_MODULE, worker_command
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -44,39 +44,18 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.container
 
-TEST_WORKER = "tests.support.worker:broker"
-DRAIN_FLAG = "--wait-tasks-timeout"
-# The production worker command's flags, on the test worker module, in one
+# The image contract's worker command on the test worker module, in one
 # worker process so a message has nowhere else to go.
-WORKER_COMMAND = [
-    "taskiq",
-    "worker",
-    TEST_WORKER,
-    DRAIN_FLAG,
-    "25",
-    "--max-fails",
-    "1",
-    "--max-async-tasks",
-    "10",
-    "--workers",
-    "1",
-]
-# Longer than the probe tasks' 8-second timeout, and short enough for CI.
-IDLE_TIMEOUT = "10"
-# A listening worker reads every 2 seconds (the broker's read block), so one
-# its consumer group hasn't heard from for longer has stopped fetching. The
+WORKER_COMMAND = [*worker_command(TEST_WORKER_MODULE), "--workers", "1"]
+# A listening worker tries a read at least every 2 seconds (the broker's read
+# block), so a consumer whose `idle` time, since its last attempted read,
+# passes this has stopped fetching. The
 # workers' own INFO logs can't say so: Python 3.14 starts worker processes with
 # `forkserver`, and Taskiq configures their logging only under `spawn`.
 STOPPED_READING_MILLISECONDS = 3000
 # Time for a worker to reclaim a message: the idle timeout plus margin.
 REDELIVERY_SECONDS = 40
 EXIT_SECONDS = 30
-
-
-def _with_drain_seconds(seconds: int) -> list[str]:
-    """Return the worker command with `--wait-tasks-timeout` set to `seconds`."""
-    value = WORKER_COMMAND.index(DRAIN_FLAG) + 1
-    return [*WORKER_COMMAND[:value], str(seconds), *WORKER_COMMAND[value + 1 :]]
 
 
 @pytest.fixture
@@ -86,7 +65,7 @@ def environment(database: PostgresDatabase, valkey_url: str) -> dict[str, str]:
         "TALLY_ENVIRONMENT": "test",
         "TALLY_DATABASE_URL": from_container(database.app_url),
         "TALLY_VALKEY_URL": from_container(valkey_url),
-        "TALLY_BROKER_IDLE_TIMEOUT": IDLE_TIMEOUT,
+        "TALLY_BROKER_IDLE_TIMEOUT": str(int(TEST_IDLE_TIMEOUT.total_seconds())),
     }
 
 
@@ -98,34 +77,13 @@ async def kicker(valkey_url: str) -> AsyncGenerator[RedisStreamBroker]:
     await broker.shutdown()
 
 
-@pytest.fixture
-async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
-    client = build_client(valkey_url)
-    yield client
-    await client.aclose()
-
-
-async def _count(valkey: Redis, key: str) -> int:
-    value = await valkey.get(key)
-    return 0 if value is None else int(value)
-
-
-async def _pending(valkey: Redis) -> int:
-    summary = await valkey.xpending(STREAM, CONSUMER_GROUP)
-    return int(summary["pending"])
-
-
-async def _kick(broker: RedisStreamBroker, task_name: str, **kwargs: object) -> None:
-    _ = await AsyncKicker(task_name, broker, {}).kiq(**kwargs)
-
-
 async def _consumers(valkey: Redis) -> dict[str, int]:
-    """Return each consumer in the group, with the milliseconds since it read."""
+    """Return each consumer in the group, with milliseconds since its last read."""
     try:
         rows = await valkey.xinfo_consumers(STREAM, CONSUMER_GROUP)
     except ResponseError:
         return {}
-    return {str(row["name"]): int(row["inactive"]) for row in rows}
+    return {str(row["name"]): int(row["idle"]) for row in rows}
 
 
 async def _started(
@@ -151,8 +109,8 @@ async def _stopped_fetching(worker: Container, valkey: Redis, consumer: str) -> 
         worker.reload()
         if worker.status == "exited":
             return True
-        inactive = (await _consumers(valkey)).get(consumer, 0)
-        return inactive > STOPPED_READING_MILLISECONDS
+        idle = (await _consumers(valkey)).get(consumer, 0)
+        return idle > STOPPED_READING_MILLISECONDS
 
     await eventually(stopped)
 
@@ -170,7 +128,7 @@ async def _until_redelivered(
     async def check() -> bool:
         if await done():
             return True
-        await _kick(kicker, tasks.RECORD, key="nudge", fail=False)
+        await kick(kicker, tasks.RECORD, key="nudge", fail=False)
         await asyncio.sleep(1)
         return False
 
@@ -183,7 +141,7 @@ async def _finish_by_redelivery(
     """Redeliver until `probe.sleep` for `key` finishes."""
 
     async def finished() -> bool:
-        return await _count(valkey, tasks.finished_key(key)) > 0
+        return await count(valkey, tasks.finished_key(key)) > 0
 
     await _until_redelivered(kicker, finished)
 
@@ -228,21 +186,21 @@ async def test_a_killed_workers_message_is_redelivered(
 ) -> None:
     key = uuid.uuid4().hex
     first, _ = await _started(lambda: start_worker(WORKER_COMMAND, environment), valkey)
-    await _kick(kicker, tasks.SLEEP, key=key, seconds=6)
+    await kick(kicker, tasks.SLEEP, key=key, seconds=6)
     await eventually(lambda: _counted(valkey, tasks.started_key(key), 1))
 
     first.kill()
     await asyncio.to_thread(first.wait, timeout=EXIT_SECONDS)
-    assert await _pending(valkey) == 1
+    assert await pending(valkey) == 1
     _ = await _started(lambda: start_worker(WORKER_COMMAND, environment), valkey)
     await _finish_by_redelivery(kicker, valkey, key)
 
-    assert await _count(valkey, tasks.started_key(key)) == 2
-    assert await _count(valkey, tasks.finished_key(key)) == 1
+    assert await count(valkey, tasks.started_key(key)) == 2
+    assert await count(valkey, tasks.finished_key(key)) == 1
 
 
 async def _counted(valkey: Redis, key: str, expected: int) -> bool:
-    return await _count(valkey, key) == expected
+    return await count(valkey, key) == expected
 
 
 async def test_sigterm_stops_fetching_and_finishes_the_running_task(
@@ -255,18 +213,18 @@ async def test_sigterm_stops_fetching_and_finishes_the_running_task(
     worker, consumer = await _started(
         lambda: start_worker(WORKER_COMMAND, environment), valkey
     )
-    await _kick(kicker, tasks.SLEEP, key=key, seconds=3)
+    await kick(kicker, tasks.SLEEP, key=key, seconds=3)
     await eventually(lambda: _counted(valkey, tasks.started_key(key), 1))
 
     worker.kill(signal="SIGTERM")
     await _stopped_fetching(worker, valkey, consumer)
-    await _kick(kicker, tasks.RECORD, key=key, fail=False)
+    await kick(kicker, tasks.RECORD, key=key, fail=False)
     result = await asyncio.to_thread(worker.wait, timeout=EXIT_SECONDS)
 
     assert result["StatusCode"] == 0, worker.logs().decode()
-    assert await _count(valkey, tasks.finished_key(key)) == 1
-    assert await _count(valkey, tasks.runs_key(key)) == 0
-    assert await _pending(valkey) == 0
+    assert await count(valkey, tasks.finished_key(key)) == 1
+    assert await count(valkey, tasks.runs_key(key)) == 0
+    assert await pending(valkey) == 0
 
 
 async def test_sigterm_leaves_a_task_still_running_unacknowledged(
@@ -278,22 +236,30 @@ async def test_sigterm_leaves_a_task_still_running_unacknowledged(
     key = uuid.uuid4().hex
     sleep_seconds = 6
     worker, consumer = await _started(
-        lambda: start_worker(_with_drain_seconds(1), environment), valkey
+        lambda: start_worker(
+            [
+                *worker_command(TEST_WORKER_MODULE, wait_tasks_seconds=1),
+                "--workers",
+                "1",
+            ],
+            environment,
+        ),
+        valkey,
     )
-    await _kick(kicker, tasks.SLEEP, key=key, seconds=sleep_seconds)
+    await kick(kicker, tasks.SLEEP, key=key, seconds=sleep_seconds)
     await eventually(lambda: _counted(valkey, tasks.started_key(key), 1))
 
     signalled = time.monotonic()
     worker.kill(signal="SIGTERM")
     await _stopped_fetching(worker, valkey, consumer)
-    await _kick(kicker, tasks.RECORD, key=key, fail=False)
+    await kick(kicker, tasks.RECORD, key=key, fail=False)
     _ = await asyncio.to_thread(worker.wait, timeout=EXIT_SECONDS)
     elapsed = time.monotonic() - signalled
 
     assert elapsed < sleep_seconds
-    assert await _count(valkey, tasks.finished_key(key)) == 0
-    assert await _count(valkey, tasks.runs_key(key)) == 0
-    assert await _pending(valkey) == 1
+    assert await count(valkey, tasks.finished_key(key)) == 0
+    assert await count(valkey, tasks.runs_key(key)) == 0
+    assert await pending(valkey) == 1
     _ = await _started(lambda: start_worker(WORKER_COMMAND, environment), valkey)
     await _finish_by_redelivery(kicker, valkey, key)
     await eventually(lambda: _counted(valkey, tasks.runs_key(key), 1))

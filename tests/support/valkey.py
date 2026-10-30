@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from testcontainers.community.valkey import ValkeyContainer
 
 from tally_aloft.adapters.outbound.redis.client import build_client
+from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -49,3 +50,15 @@ async def stream_data(client: Redis, stream: str) -> list[bytes]:
         "list[tuple[bytes, dict[bytes, bytes]]]", await client.xrange(stream)
     )
     return [fields[b"data"] for _, fields in entries]
+
+
+async def count(client: Redis, key: str) -> int:
+    """Return the counter at `key`, or 0 if it was never incremented."""
+    value = await client.get(key)
+    return 0 if value is None else int(value)
+
+
+async def pending(client: Redis) -> int:
+    """Return how many of the broker's messages are delivered but unacknowledged."""
+    summary = await client.xpending(STREAM, CONSUMER_GROUP)
+    return int(summary["pending"])

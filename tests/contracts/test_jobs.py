@@ -369,3 +369,17 @@ async def test_postgres_stores_a_json_null_payload_as_json(
         )
 
     assert result.scalar_one() == "null"
+
+
+async def test_success_after_a_failed_attempt_clears_its_code(case: JobsCase) -> None:
+    job = await _record(case)
+    _ = await _claim(case, job)
+    async with case.uow() as uow:
+        _ = await uow.job_runner.fail(job.id, 1, "boom")
+    _ = await _claim(case, job)
+
+    async with case.uow() as uow:
+        assert await uow.job_runner.complete(job.id, 2, "done")
+
+    state = await _state(case, job)
+    assert (state.status, state.error_code) == (JobStatus.SUCCEEDED, None)

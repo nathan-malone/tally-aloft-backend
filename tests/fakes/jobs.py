@@ -107,7 +107,13 @@ class FakeJobRunner:
         if row is None:
             return False
         self.table.put(
-            replace(row, status=JobStatus.SUCCEEDED, result=result, lease_until=None)
+            replace(
+                row,
+                status=JobStatus.SUCCEEDED,
+                result=result,
+                error_code=None,
+                lease_until=None,
+            )
         )
         return True
 

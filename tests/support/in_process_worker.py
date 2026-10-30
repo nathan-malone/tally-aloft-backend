@@ -3,7 +3,10 @@ import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from taskiq.kicker import AsyncKicker
 from taskiq.receiver import Receiver
+
+from tests.support.worker_command import MAX_ASYNC_TASKS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -13,8 +16,6 @@ if TYPE_CHECKING:
 # How long a test waits for a worker to do something before it fails.
 WAIT_SECONDS = 20
 _POLL_SECONDS = 0.05
-# As the production worker command's `--max-async-tasks`.
-_MAX_ASYNC_TASKS = 10
 
 
 @asynccontextmanager
@@ -27,7 +28,7 @@ async def running_worker(broker: RedisStreamBroker) -> AsyncGenerator[None]:
     """
     broker.is_worker_process = True
     receiver = Receiver(
-        broker, max_async_tasks=_MAX_ASYNC_TASKS, wait_tasks_timeout=WAIT_SECONDS
+        broker, max_async_tasks=MAX_ASYNC_TASKS, wait_tasks_timeout=WAIT_SECONDS
     )
     finish = asyncio.Event()
     listening = asyncio.create_task(receiver.listen(finish))
@@ -51,3 +52,8 @@ async def eventually(
             msg = f"the condition didn't hold within {within} seconds"
             raise AssertionError(msg)
         await asyncio.sleep(_POLL_SECONDS)
+
+
+async def kick(broker: RedisStreamBroker, task_name: str, **kwargs: object) -> None:
+    """Kick `task_name` by name, with no labels, as the job queue does."""
+    _ = await AsyncKicker(task_name, broker, {}).kiq(**kwargs)

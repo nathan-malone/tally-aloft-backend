@@ -14,8 +14,9 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.jobs.kinds import JobBody, JobKind
 
 # How much longer than a kind's time limit Taskiq lets the whole task run. It
-# covers the claim and the outcome's write, so it exceeds the database's
-# 30-second statement timeout, which bounds that write.
+# must cover the claim and the outcome's write, each of which can wait for a
+# pooled connection and then run up to the statement timeout, so a pool with
+# room for every task's renewal and write keeps the backstop from firing.
 JOB_BACKSTOP = timedelta(seconds=30)
 
 

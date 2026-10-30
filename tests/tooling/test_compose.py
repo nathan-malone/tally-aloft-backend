@@ -9,24 +9,15 @@ from tests.support.containers import docker_cli
 from tests.support.paths import ROOT
 from tests.support.postgres import POSTGRES_IMAGE
 from tests.support.valkey import VALKEY_IMAGE
+from tests.support.worker_command import (
+    TEST_WORKER_MODULE,
+    WORKER_MODULE,
+    worker_command,
+)
 
 pytestmark = pytest.mark.container
 
 Service = dict[str, object]
-
-
-# The image contract's worker command, on the real worker module.
-WORKER_COMMAND = [
-    "taskiq",
-    "worker",
-    "tally_aloft.worker:broker",
-    "--wait-tasks-timeout",
-    "25",
-    "--max-fails",
-    "1",
-    "--max-async-tasks",
-    "10",
-]
 
 
 def _rendered(*files: str) -> dict[str, Service]:
@@ -206,7 +197,7 @@ def test_the_worker_runs_only_in_the_app_profile(worker_service: Service) -> Non
 
 
 def test_the_worker_runs_the_image_contracts_command(worker_service: Service) -> None:
-    assert worker_service["command"] == WORKER_COMMAND
+    assert worker_service["command"] == worker_command(WORKER_MODULE)
 
 
 def test_the_worker_serves_no_port_and_has_no_health_check(
@@ -246,7 +237,4 @@ def test_the_e2e_override_runs_the_test_worker_from_the_dev_stage() -> None:
     build = cast("dict[str, object]", worker["build"])
 
     assert build["target"] == "dev"
-    assert worker["command"] == [
-        "tests.support.worker:broker" if part == "tally_aloft.worker:broker" else part
-        for part in WORKER_COMMAND
-    ]
+    assert worker["command"] == worker_command(TEST_WORKER_MODULE)

@@ -171,7 +171,7 @@ api.run:
 # The flags are the image contract's worker command.
 .PHONY: worker.run
 worker.run:
-	uv run --locked --env-file .env taskiq worker tally_aloft.worker:broker --workers 1 --wait-tasks-timeout 25 --max-fails 1 --max-async-tasks 10
+	uv run --locked --env-file .env taskiq worker tally_aloft.worker:broker --wait-tasks-timeout 25 --max-fails 1 --max-async-tasks 10 --workers 1
 
 .PHONY: containers.up
 containers.up:

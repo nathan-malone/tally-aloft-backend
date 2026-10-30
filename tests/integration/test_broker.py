@@ -12,28 +12,21 @@ from typing import TYPE_CHECKING
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
-from taskiq.kicker import AsyncKicker
 
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
-from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.application.registry import UseCases
 from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM, build_broker
 from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.bootstrap.worker import create_worker
 from tests.support import tasks
-from tests.support.in_process_worker import eventually, running_worker
+from tests.support.in_process_worker import eventually, kick, running_worker
+from tests.support.jobs import TEST_IDLE_TIMEOUT
+from tests.support.valkey import count, pending
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from taskiq_redis import RedisStreamBroker
-
     from tests.support.postgres import PostgresDatabase
 
 pytestmark = pytest.mark.container
-
-# The test worker's idle_timeout, as in the image suite.
-IDLE_TIMEOUT = 10
 
 
 @pytest.fixture
@@ -41,31 +34,8 @@ def settings(database: PostgresDatabase, valkey_url: str) -> Settings:
     return Settings.for_tests(
         database_url=database.app_url,
         valkey_url=valkey_url,
-        broker_idle_timeout=IDLE_TIMEOUT,
+        broker_idle_timeout=int(TEST_IDLE_TIMEOUT.total_seconds()),
     )
-
-
-@pytest.fixture
-async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
-    """A client for reading the broker's keys and the probes' counters."""
-    client = build_client(valkey_url)
-    yield client
-    await client.aclose()
-
-
-async def _kick(broker: RedisStreamBroker, task_name: str, **kwargs: object) -> None:
-    """Kick `task_name` by name, as the job queue does."""
-    _ = await AsyncKicker(task_name, broker, {}).kiq(**kwargs)
-
-
-async def _count(valkey: Redis, key: str) -> int:
-    value = await valkey.get(key)
-    return 0 if value is None else int(value)
-
-
-async def _pending(valkey: Redis) -> int:
-    summary = await valkey.xpending(STREAM, CONSUMER_GROUP)
-    return int(summary["pending"])
 
 
 @pytest.mark.parametrize("fail", [False, True], ids=["returns", "raises"])
@@ -76,19 +46,19 @@ async def test_a_task_is_acknowledged_once_it_ends(
     key = uuid.uuid4().hex
 
     async with running_worker(broker):
-        await _kick(broker, tasks.RECORD, key=key, fail=fail)
+        await kick(broker, tasks.RECORD, key=key, fail=fail)
         await eventually(lambda: _ran(valkey, tasks.runs_key(key)))
-        await eventually(lambda: _none_pending(valkey))
+        await eventually(lambda: _nonepending(valkey))
 
-    assert await _count(valkey, tasks.runs_key(key)) == 1
+    assert await count(valkey, tasks.runs_key(key)) == 1
 
 
 async def _ran(valkey: Redis, key: str) -> bool:
-    return await _count(valkey, key) == 1
+    return await count(valkey, key) == 1
 
 
-async def _none_pending(valkey: Redis) -> bool:
-    return await _pending(valkey) == 0
+async def _nonepending(valkey: Redis) -> bool:
+    return await pending(valkey) == 0
 
 
 async def test_the_stream_and_group_are_the_brokers_own(
@@ -97,7 +67,7 @@ async def test_the_stream_and_group_are_the_brokers_own(
     broker = create_worker(settings, tasks.TEST_TASKS)
 
     async with running_worker(broker):
-        await _kick(broker, tasks.RECORD, key="k", fail=False)
+        await kick(broker, tasks.RECORD, key="k", fail=False)
         await eventually(lambda: _ran(valkey, tasks.runs_key("k")))
 
     groups = await valkey.xinfo_groups(STREAM)
@@ -122,7 +92,7 @@ async def test_a_task_gets_the_use_cases_and_shutdown_closes_the_resources(
     broker = create_worker(settings, tasks.TEST_TASKS)
 
     async with running_worker(broker):
-        await _kick(broker, tasks.USE_CASES)
+        await kick(broker, tasks.USE_CASES)
         await eventually(_received_use_cases)
         assert disposed == []
 
@@ -149,11 +119,11 @@ async def test_a_task_kicked_by_name_is_stopped_by_its_registered_timeout(
     key = uuid.uuid4().hex
 
     async with running_worker(broker):
-        await _kick(broker, tasks.SLEEP, key=key, seconds=30)
+        await kick(broker, tasks.SLEEP, key=key, seconds=30)
         await eventually(lambda: _ran(valkey, tasks.started_key(key)))
-        await eventually(lambda: _none_pending(valkey), within=5)
+        await eventually(lambda: _nonepending(valkey), within=5)
 
-    assert await _count(valkey, tasks.finished_key(key)) == 0
+    assert await count(valkey, tasks.finished_key(key)) == 0
 
 
 async def test_the_stream_is_trimmed_to_about_maxlen(
@@ -164,7 +134,7 @@ async def test_the_stream_is_trimmed_to_about_maxlen(
     )
     try:
         for _ in range(1000):
-            await _kick(broker, tasks.RECORD, key="k", fail=False)
+            await kick(broker, tasks.RECORD, key="k", fail=False)
     finally:
         await broker.shutdown()
 

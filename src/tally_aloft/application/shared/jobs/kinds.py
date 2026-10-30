@@ -17,11 +17,10 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.codec import Codec
     from tally_aloft.domain.shared.ids import PilotId
 
-# Error codes a failed attempt records when the body raised no coded error.
-TIMEOUT = "timeout"
-UNHANDLED_ERROR = "unhandled_error"
-# The event logged when a task finds it no longer holds its job's lease.
-LEASE_LOST = "lease_lost"
+# The error codes a failed attempt records when its body raised no coded
+# error. They are stored on the job row, beside the bodies' own codes.
+TIMEOUT_CODE = "timeout"
+UNHANDLED_ERROR_CODE = "unhandled_error"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +86,7 @@ class ClaimedJob[P]:
 
     id: JobId
     pilot_id: PilotId
+    # The kind's name, not its `JobKind`.
     kind: str
     attempts: int
     payload: P

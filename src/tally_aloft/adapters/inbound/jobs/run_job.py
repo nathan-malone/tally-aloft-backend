@@ -12,9 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from tally_aloft.application.shared.jobs.kinds import (
-    LEASE_LOST,
-    TIMEOUT,
-    UNHANDLED_ERROR,
+    TIMEOUT_CODE,
+    UNHANDLED_ERROR_CODE,
 )
 from tally_aloft.domain.shared.errors import CodedError
 
@@ -29,6 +28,9 @@ if TYPE_CHECKING:
     )
 
 _logger = logging.getLogger(__name__)
+
+# The event logged when a task finds it no longer holds its job's lease.
+LEASE_LOST = "lease_lost"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,10 @@ async def run_job[P, R](
     half lease. If the lease is lost, the body is cancelled and nothing is
     written. Otherwise the job is completed, or its attempt failed with the
     body's error code, `timeout` or `unhandled_error`.
+
+    If writing the outcome raises, as when the database is down, the error
+    propagates: Taskiq logs it and acknowledges the message, and the row stays
+    `running` until its lease expires and the sweeper recovers it.
     """
     loop = asyncio.get_running_loop()
     claim_started = loop.time()
@@ -76,8 +82,7 @@ async def run_job[P, R](
         await _stop(renewal)
         await _record(use_cases, claimed, work.result())
     finally:
-        await _stop(work)
-        await _stop(renewal)
+        await _stop(work, renewal)
 
 
 async def _run_body[P, R](
@@ -101,7 +106,7 @@ async def _run_body[P, R](
     except Exception as error:
         # The body's own TimeoutError, within the limit, is an unhandled one.
         if isinstance(error, TimeoutError) and limit.expired():
-            return _Failed(TIMEOUT)
+            return _Failed(TIMEOUT_CODE)
         _logger.exception(
             "Job %s (%s) attempt %d raised %s",
             claimed.id.value,
@@ -109,7 +114,7 @@ async def _run_body[P, R](
             claimed.attempts,
             type(error).__qualname__,
         )
-        return _Failed(UNHANDLED_ERROR)
+        return _Failed(UNHANDLED_ERROR_CODE)
 
 
 async def _renew_until_lost[P, R](
@@ -171,11 +176,19 @@ async def _record(
         _log_lease_lost(claimed)
 
 
-async def _stop(task: asyncio.Task[object]) -> None:
-    """Cancel `task` if it is still running, and wait for it to end."""
-    if not task.done():
+async def _stop(*tasks: asyncio.Task[object]) -> None:
+    """
+    Cancel every task in `tasks`, then wait for them to end.
+
+    All are cancelled before anything is awaited. Taskiq's backstop cancels
+    through anyio, which cancels the wrapper again on every loop turn, so the
+    wait can be cut short; by then every task has been told to stop.
+    """
+    running = {task for task in tasks if not task.done()}
+    for task in running:
         _ = task.cancel()
-        _ = await asyncio.wait({task})
+    if len(running) > 0:
+        _ = await asyncio.wait(running)
 
 
 def _log_lease_lost(claimed: ClaimedJob[JsonValue]) -> None:

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
-from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.bootstrap.broker import STREAM, build_broker
 from tally_aloft.bootstrap.settings import Settings
@@ -36,13 +35,6 @@ async def broker(valkey_url: str) -> AsyncGenerator[RedisStreamBroker]:
     broker = build_broker(Settings.for_tests(valkey_url=valkey_url))
     yield broker
     await broker.shutdown()
-
-
-@pytest.fixture
-async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
-    client = build_client(valkey_url)
-    yield client
-    await client.aclose()
 
 
 @pytest.fixture

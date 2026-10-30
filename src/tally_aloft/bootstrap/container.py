@@ -14,6 +14,7 @@ from tally_aloft.application.shared.jobs.claim_job import ClaimJob
 from tally_aloft.application.shared.jobs.complete_job import CompleteJob
 from tally_aloft.application.shared.jobs.fail_job_attempt import FailJobAttempt
 from tally_aloft.application.shared.jobs.renew_job_lease import RenewJobLease
+from tally_aloft.bootstrap.broker import idle_timeout
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -30,9 +31,6 @@ if TYPE_CHECKING:
 # Every task the production worker runs. Job kinds and scheduled tasks join
 # it as features and maintenance jobs are built.
 TASKS: tuple[TaskDefinition, ...] = ()
-
-# The broker counts idle time in milliseconds.
-_MILLISECOND = timedelta(milliseconds=1)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,11 +94,11 @@ def register_tasks(broker: RedisStreamBroker, tasks: Sequence[TaskDefinition]) -
     if len(duplicates) > 0:
         msg = f"task names must be unique: {', '.join(sorted(duplicates))}"
         raise ValueError(msg)
-    idle_timeout = broker.idle_timeout * _MILLISECOND
+    idle = idle_timeout(broker)
     longest = max((task.timeout for task in tasks), default=timedelta(0))
-    if idle_timeout <= longest:
+    if idle <= longest:
         msg = (
-            f"TALLY_BROKER_IDLE_TIMEOUT ({_seconds(idle_timeout)}) must be greater "
+            f"TALLY_BROKER_IDLE_TIMEOUT ({_seconds(idle)}) must be greater "
             f"than the longest task timeout ({_seconds(longest)})"
         )
         raise ValueError(msg)

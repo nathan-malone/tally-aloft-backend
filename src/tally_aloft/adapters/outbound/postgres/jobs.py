@@ -111,12 +111,13 @@ class PostgresJobRunner:
         )
 
     async def complete(self, job_id: JobId, attempts: int, result: JsonValue) -> bool:
-        """Set `succeeded` and store `result`, fenced on `attempts`."""
+        """Set `succeeded`, store `result`, clear an earlier attempt's code."""
         return await self._update_running(
             job_id,
             attempts,
             status=JobStatus.SUCCEEDED,
             result=result,
+            error_code=None,
             lease_until=None,
         )
 

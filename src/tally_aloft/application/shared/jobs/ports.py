@@ -52,7 +52,7 @@ class JobRunner(Protocol):
         ...
 
     async def complete(self, job_id: JobId, attempts: int, result: JsonValue) -> bool:
-        """Set `succeeded` and store `result`."""
+        """Set `succeeded`, store `result` and clear any earlier `error_code`."""
         ...
 
     async def fail(self, job_id: JobId, attempts: int, error_code: str) -> bool:

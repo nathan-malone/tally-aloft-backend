@@ -72,7 +72,7 @@ async def test_renew_complete_and_fail_each_use_one_unit_of_work() -> None:
     assert (row.status, row.result, row.error_code) == (
         JobStatus.SUCCEEDED,
         "done",
-        "boom",
+        None,
     )
 
 

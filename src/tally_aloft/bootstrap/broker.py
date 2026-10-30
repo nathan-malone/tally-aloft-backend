@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from taskiq_redis import RedisStreamBroker
@@ -17,11 +18,13 @@ _GROUP_START = "0"
 # How long a read waits for new messages. It must stay below the connection's
 # 5-second socket timeout, or every idle read would time out.
 _READ_BLOCK_MILLISECONDS = 2000
-# A worker takes one message per read, so it holds only what it can start, and
-# a killed worker strands no backlog until `idle_timeout`.
+# A worker takes one message per read, and reclaims one idle message after each
+# new one, so it holds only what it can start, and a killed worker strands no
+# backlog until `idle_timeout`.
 _READ_COUNT = 1
 _POOL_SIZE = 20
-_MILLISECONDS_PER_SECOND = 1000
+# taskiq-redis counts idle time in milliseconds.
+_MILLISECOND = timedelta(milliseconds=1)
 
 
 def build_broker(settings: Settings) -> RedisStreamBroker:
@@ -41,11 +44,17 @@ def build_broker(settings: Settings) -> RedisStreamBroker:
         consumer_id=_GROUP_START,
         maxlen=settings.broker_stream_maxlen,
         approximate=True,
-        idle_timeout=settings.broker_idle_timeout * _MILLISECONDS_PER_SECOND,
+        idle_timeout=timedelta(seconds=settings.broker_idle_timeout) // _MILLISECOND,
         xread_block=_READ_BLOCK_MILLISECONDS,
         xread_count=_READ_COUNT,
+        unacknowledged_batch_size=_READ_COUNT,
         max_connection_pool_size=_POOL_SIZE,
         socket_connect_timeout=options.socket_connect_timeout,
         socket_timeout=options.socket_timeout,
         retry=options.retry,
     )
+
+
+def idle_timeout(broker: RedisStreamBroker) -> timedelta:
+    """Return how long a message may go unacknowledged before it is reclaimed."""
+    return broker.idle_timeout * _MILLISECOND
