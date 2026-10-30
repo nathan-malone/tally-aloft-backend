@@ -1,7 +1,5 @@
-import importlib
 import json
 import logging
-import pkgutil
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -9,7 +7,6 @@ import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
-import tally_aloft
 from tally_aloft.adapters.inbound.http.errors import (
     ERROR_STATUSES,
     HTTP_ERROR_CODES,
@@ -30,13 +27,11 @@ from tests.support.contract_routes import (
     contract_app,
 )
 from tests.support.http import request
-from tests.support.paths import ROOT
+from tests.support.modules import import_every_module, source_modules
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
-# Entry points read settings at import, and define no errors.
-ENTRY_POINTS = {"tally_aloft.main", "tally_aloft.worker"}
 BODY_KEYS = {"code", "message", "details"}
 
 
@@ -193,28 +188,6 @@ def test_grouping_bases_are_never_unmapped() -> None:
     assert unmapped_errors([GroupError], {}) == []
 
 
-def _source_modules() -> set[str]:
-    package = ROOT / "src" / "tally_aloft"
-    names: set[str] = set()
-    for path in package.rglob("*.py"):
-        parts = path.relative_to(package.parent).with_suffix("").parts
-        if parts[-1] == "__init__":
-            parts = parts[:-1]
-        names.add(".".join(parts))
-    return names - {"tally_aloft"} - ENTRY_POINTS
-
-
-def _import_every_module() -> set[str]:
-    walked = {
-        module.name
-        for module in pkgutil.walk_packages(tally_aloft.__path__, "tally_aloft.")
-        if module.name not in ENTRY_POINTS
-    }
-    for name in walked:
-        importlib.import_module(name)
-    return walked
-
-
 def _subclasses(base: type[CodedError]) -> Iterator[type[CodedError]]:
     for subclass in base.__subclasses__():
         yield subclass
@@ -222,7 +195,7 @@ def _subclasses(base: type[CodedError]) -> Iterator[type[CodedError]]:
 
 
 def test_every_production_error_is_mapped() -> None:
-    walked = _import_every_module()
+    walked = import_every_module()
     errors = [
         error_class
         for base in (DomainError, ApplicationError)
@@ -230,7 +203,7 @@ def test_every_production_error_is_mapped() -> None:
         if error_class.__module__.startswith("tally_aloft.")
     ]
 
-    assert walked == _source_modules()
+    assert walked == source_modules()
     assert unmapped_errors(errors, ERROR_STATUSES) == []
 
 

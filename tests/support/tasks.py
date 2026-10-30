@@ -18,6 +18,7 @@ from taskiq_redis import RedisStreamBroker
 from tally_aloft.adapters.inbound.jobs.dependencies import UseCasesDep  # noqa: TC001  # Taskiq reads task annotations at run time.
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
 from tally_aloft.application.registry import UseCases  # noqa: TC001  # Taskiq reads task annotations at run time.
+from tests.support.jobs import TEST_JOB_TASKS
 
 RECORD = "probe.record"
 SLEEP = "probe.sleep"
@@ -86,4 +87,4 @@ PROBE_TASKS = (
 )
 
 # Every task the test worker registers.
-TEST_TASKS: tuple[TaskDefinition, ...] = PROBE_TASKS
+TEST_TASKS: tuple[TaskDefinition, ...] = (*PROBE_TASKS, *TEST_JOB_TASKS)

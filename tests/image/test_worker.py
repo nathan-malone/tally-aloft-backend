@@ -13,23 +13,33 @@ from typing import TYPE_CHECKING
 
 import pytest
 from redis.exceptions import ResponseError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine
 from taskiq.kicker import AsyncKicker
 
+from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
+from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.adapters.outbound.redis.client import build_client
+from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
+from tally_aloft.application.shared.jobs.kinds import JobStatus
 from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM, build_broker
 from tally_aloft.bootstrap.settings import Settings
+from tally_aloft.domain.shared.ids import PilotId
 from tests.support import tasks
 from tests.support.containers import from_container
 from tests.support.in_process_worker import eventually
+from tests.support.jobs import SLOW_FIRST_ATTEMPT, RecordTestJob
+from tests.support.postgres import connected
 from tests.support.server import REQUIRED_SETTINGS
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from docker.models.containers import Container
     from redis.asyncio import Redis
     from taskiq_redis import RedisStreamBroker
 
+    from tally_aloft.application.shared.jobs.kinds import QueuedJob
     from tests.support.postgres import PostgresDatabase
 
 pytestmark = pytest.mark.container
@@ -147,24 +157,48 @@ async def _stopped_fetching(worker: Container, valkey: Redis, consumer: str) -> 
     await eventually(stopped)
 
 
-async def _finish_by_redelivery(
-    kicker: RedisStreamBroker, valkey: Redis, key: str
+async def _until_redelivered(
+    kicker: RedisStreamBroker, done: Callable[[], Awaitable[bool]]
 ) -> None:
     """
-    Kick a fresh message every second until `probe.sleep` for `key` finishes.
+    Kick a fresh message every second until `done` holds.
 
     taskiq-redis reclaims an idle message only after a read returns a new
     one, so the fresh messages are what let the running worker reclaim it.
     """
 
-    async def finished() -> bool:
-        if await _count(valkey, tasks.finished_key(key)) > 0:
+    async def check() -> bool:
+        if await done():
             return True
-        await _kick(kicker, tasks.RECORD, key=f"nudge-{key}", fail=False)
+        await _kick(kicker, tasks.RECORD, key="nudge", fail=False)
         await asyncio.sleep(1)
         return False
 
-    await eventually(finished, within=REDELIVERY_SECONDS)
+    await eventually(check, within=REDELIVERY_SECONDS)
+
+
+async def _finish_by_redelivery(
+    kicker: RedisStreamBroker, valkey: Redis, key: str
+) -> None:
+    """Redeliver until `probe.sleep` for `key` finishes."""
+
+    async def finished() -> bool:
+        return await _count(valkey, tasks.finished_key(key)) > 0
+
+    await _until_redelivered(kicker, finished)
+
+
+async def _job_is(
+    database: PostgresDatabase, job: QueuedJob, status: str, attempts: int
+) -> bool:
+    async with connected(database.app_url) as connection:
+        result = await connection.execute(
+            select(JobRecord.status, JobRecord.attempts).where(
+                JobRecord.id == job.id.value
+            )
+        )
+        row = result.one()
+    return (row.status, row.attempts) == (status, attempts)
 
 
 def test_the_image_imports_the_worker_with_no_tasks(
@@ -284,3 +318,29 @@ def test_a_worker_that_cannot_start_exits_non_zero(
     result = worker.wait(timeout=EXIT_SECONDS)
 
     assert result["StatusCode"] != 0, worker.logs().decode()
+
+
+async def test_a_killed_workers_job_finishes_once_on_redelivery(
+    start_worker: Callable[[list[str], dict[str, str]], Container],
+    environment: dict[str, str],
+    kicker: RedisStreamBroker,
+    valkey: Redis,
+    database: PostgresDatabase,
+) -> None:
+    engine = create_async_engine(database.app_url)
+    record = RecordTestJob(unit_of_work_factory(engine), TaskiqJobQueue(kicker))
+    try:
+        first, _ = await _started(
+            lambda: start_worker(WORKER_COMMAND, environment), valkey
+        )
+        job = await record(PilotId.new(), 5, kind=SLOW_FIRST_ATTEMPT)
+        await eventually(lambda: _job_is(database, job, JobStatus.RUNNING, 1))
+
+        first.kill()
+        await asyncio.to_thread(first.wait, timeout=EXIT_SECONDS)
+        _ = await _started(lambda: start_worker(WORKER_COMMAND, environment), valkey)
+        await _until_redelivered(
+            kicker, lambda: _job_is(database, job, JobStatus.SUCCEEDED, 2)
+        )
+    finally:
+        await engine.dispose()
