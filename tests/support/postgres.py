@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 from testcontainers.community.postgres import PostgresContainer
 
+from tests.support.containers import started
 from tests.support.paths import ROOT
 
 if TYPE_CHECKING:
@@ -91,18 +92,21 @@ def running_postgres() -> Generator[PostgresDatabase]:
 
     It yields the default database, which the session's migrations run on.
     """
-    container = PostgresContainer(
-        POSTGRES_IMAGE,
-        username=SUPERUSER,
-        password=SUPERUSER,
-        dbname=DATABASE,
-        driver=None,
-    ).with_volume_mapping(
-        str(INIT_SCRIPT), "/docker-entrypoint-initdb.d/init.sql", "ro"
-    )
+
+    def make() -> PostgresContainer:
+        return PostgresContainer(
+            POSTGRES_IMAGE,
+            username=SUPERUSER,
+            password=SUPERUSER,
+            dbname=DATABASE,
+            driver=None,
+        ).with_volume_mapping(
+            str(INIT_SCRIPT), "/docker-entrypoint-initdb.d/init.sql", "ro"
+        )
+
     # testcontainers waits with psql over TCP, which the image's initialization
     # server doesn't listen on, so the init script has run by the time it's up.
-    with container:
+    with started(make) as container:
         yield PostgresDatabase(
             host=container.get_container_host_ip(),
             port=container.get_exposed_port(_PORT),

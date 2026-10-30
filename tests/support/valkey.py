@@ -8,6 +8,7 @@ from testcontainers.community.valkey import ValkeyContainer
 
 from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.bootstrap.broker import CONSUMER_GROUP, STREAM
+from tests.support.containers import started
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -29,7 +30,7 @@ class ValkeyServer:
 @contextmanager
 def running_valkey() -> Generator[ValkeyServer]:
     """Start Valkey, and stop it on exit."""
-    with ValkeyContainer(VALKEY_IMAGE) as container:
+    with started(lambda: ValkeyContainer(VALKEY_IMAGE)) as container:
         # redis-py doesn't accept the container's own `valkey://` URL.
         url = f"redis://{container.get_host()}:{container.get_exposed_port()}/0"
         yield ValkeyServer(url=url, container=container)
