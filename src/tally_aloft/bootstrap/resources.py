@@ -4,12 +4,14 @@ from typing import TYPE_CHECKING
 
 from tally_aloft.adapters.outbound.postgres.engine import build_engine
 from tally_aloft.adapters.outbound.redis.client import build_client
+from tally_aloft.bootstrap.broker import build_broker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncEngine
+    from taskiq_redis import RedisStreamBroker
 
     from tally_aloft.bootstrap.settings import Settings
 
@@ -19,17 +21,25 @@ class Resources:
     """The shared clients a process opens once, which its adapters are built on."""
 
     engine: AsyncEngine
-    # The cache's Valkey client. The broker opens its own connection.
+    # The cache's Valkey client. The broker has its own connection pool.
     cache_client: Redis
+    broker: RedisStreamBroker
 
 
 @asynccontextmanager
-async def open_resources(settings: Settings) -> AsyncGenerator[Resources]:
+async def open_resources(
+    settings: Settings, broker: RedisStreamBroker | None = None
+) -> AsyncGenerator[Resources]:
     """
     Open the shared resources, and close them, last first, on exit.
 
     This is the one place that opens them, for the API's lifespan and the
     worker's startup alike. They close even when the body raises.
+
+    The API passes no `broker`, so one is built here and closed on exit. It
+    never connects until a job is dispatched: only workers create the consumer
+    group, so the API starts while Valkey is down. A worker passes its own
+    broker, which Taskiq starts and shuts down, so it is left open here.
     """
     async with AsyncExitStack() as stack:
         engine = build_engine(
@@ -41,4 +51,7 @@ async def open_resources(settings: Settings) -> AsyncGenerator[Resources]:
         _ = stack.push_async_callback(engine.dispose)
         cache_client = build_client(settings.valkey_url.get_secret_value())
         _ = stack.push_async_callback(cache_client.aclose)
-        yield Resources(engine=engine, cache_client=cache_client)
+        if broker is None:
+            broker = build_broker(settings)
+            _ = stack.push_async_callback(broker.shutdown)
+        yield Resources(engine=engine, cache_client=cache_client, broker=broker)
