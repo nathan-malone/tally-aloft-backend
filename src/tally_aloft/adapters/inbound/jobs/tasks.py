@@ -14,10 +14,12 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.jobs.kinds import JobBody, JobKind
 
 # How much longer than a kind's time limit Taskiq lets the whole task run. It
-# must cover the claim and the outcome's write, each of which can wait for a
-# pooled connection and then run up to the statement timeout, so a pool with
-# room for every task's renewal and write keeps the backstop from firing.
-JOB_BACKSTOP = timedelta(seconds=30)
+# covers the claim and the outcome's write at the default settings, each
+# waiting up to 30 seconds for a pooled connection, 5 to connect and 30 for
+# the statement timeout on its UPDATE, the one statement that can wait on a
+# lock. The 10 seconds' slack covers the codecs and cancelling the body and
+# the renewal. A higher statement timeout needs a higher backstop.
+JOB_BACKSTOP = timedelta(seconds=140)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

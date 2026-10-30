@@ -7,7 +7,10 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
-from tally_aloft.adapters.outbound.postgres.engine import CONNECT_TIMEOUT_SECONDS
+from tally_aloft.adapters.outbound.postgres.engine import (
+    CONNECT_TIMEOUT_SECONDS,
+    POOL_TIMEOUT_SECONDS,
+)
 from tally_aloft.bootstrap.resources import open_resources
 from tally_aloft.bootstrap.settings import Settings
 from tests.support.postgres import QUERY_CANCELED, sqlstate
@@ -92,6 +95,7 @@ async def test_engine_follows_the_pool_settings() -> None:
     assert isinstance(pool, AsyncAdaptedQueuePool)
     assert pool.size() == 3
     assert pool._max_overflow == 2  # noqa: SLF001  # The pool has no public getter.
+    assert pool.timeout() == POOL_TIMEOUT_SECONDS
     assert hides_parameters
 
 

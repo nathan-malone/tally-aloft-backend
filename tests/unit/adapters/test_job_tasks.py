@@ -11,6 +11,10 @@ from tally_aloft.adapters.inbound.jobs.tasks import (
     TaskDefinition,
     job_task,
 )
+from tally_aloft.adapters.outbound.postgres.engine import (
+    CONNECT_TIMEOUT_SECONDS,
+    POOL_TIMEOUT_SECONDS,
+)
 from tally_aloft.application.shared.jobs.kinds import JobKind
 from tally_aloft.bootstrap.broker import build_broker
 from tally_aloft.bootstrap.container import register_tasks
@@ -84,7 +88,24 @@ def test_a_job_task_runs_its_kind_under_its_name() -> None:
 
 def test_a_job_tasks_timeout_is_its_time_limit_plus_the_backstop() -> None:
     assert job_task(KIND, _pick_body).timeout == KIND.time_limit + JOB_BACKSTOP
-    assert timedelta(seconds=30) == JOB_BACKSTOP
+
+
+def test_the_backstop_covers_the_claim_and_the_outcomes_write() -> None:
+    # Each waits for a pooled connection, then to connect, then runs up to the
+    # default statement timeout.
+    statement_timeout = Settings.for_tests().database_statement_timeout
+    step = POOL_TIMEOUT_SECONDS + CONNECT_TIMEOUT_SECONDS + statement_timeout
+
+    assert timedelta(seconds=2 * step) < JOB_BACKSTOP
+
+
+async def test_a_default_job_kind_fits_the_default_idle_timeout() -> None:
+    kind = JobKind(name="test.defaults", payload_codec=JSON, result_codec=JSON)
+    broker = build_broker(Settings.for_tests())
+    try:
+        register_tasks(broker, [job_task(kind, _pick_body)])
+    finally:
+        await broker.shutdown()
 
 
 def test_a_job_task_takes_a_shorter_backstop() -> None:
