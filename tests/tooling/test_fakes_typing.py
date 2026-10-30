@@ -87,6 +87,20 @@ CASES = [
         ),
         id="Clock",
     ),
+    pytest.param(
+        PortCase(
+            imports="from tally_aloft.application.ports.job_queue import JobQueue\n"
+            "from tally_aloft.application.shared.jobs.kinds import JobId",
+            port="JobQueue",
+            matching="""\
+    async def dispatch(self, job_id: JobId, kind_name: str) -> None:
+        return None""",
+            drifted="""\
+    async def dispatch(self, job_id: JobId) -> None:
+        return None""",
+        ),
+        id="JobQueue",
+    ),
 ]
 
 

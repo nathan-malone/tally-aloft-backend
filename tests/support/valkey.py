@@ -2,7 +2,7 @@
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from testcontainers.community.valkey import ValkeyContainer
 
@@ -10,6 +10,8 @@ from tally_aloft.adapters.outbound.redis.client import build_client
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from redis.asyncio import Redis
 
 # The one place the tests' Valkey version is set; compose.yaml must match it.
 VALKEY_IMAGE = "valkey/valkey:9"
@@ -39,3 +41,11 @@ async def flush(url: str) -> None:
         _ = await client.flushdb()
     finally:
         await client.aclose()
+
+
+async def stream_data(client: Redis, stream: str) -> list[bytes]:
+    """Return the `data` field of each entry in `stream`, oldest first."""
+    entries = cast(
+        "list[tuple[bytes, dict[bytes, bytes]]]", await client.xrange(stream)
+    )
+    return [fields[b"data"] for _, fields in entries]

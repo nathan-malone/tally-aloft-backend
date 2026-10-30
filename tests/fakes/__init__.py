@@ -4,6 +4,7 @@ from tests.fakes.cache import FakeCache
 from tests.fakes.clock import FakeClock
 from tests.fakes.database import FakeDatabase
 from tests.fakes.health import FakeDependencyCheck
+from tests.fakes.job_queue import FakeJobQueue
 from tests.fakes.jobs import FakeJobRepository, FakeJobRunner, FakeJobTable
 from tests.fakes.unit_of_work import FakeUnitOfWork
 
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
     from tally_aloft.application.ports.cache import Cache
     from tally_aloft.application.ports.clock import Clock
     from tally_aloft.application.ports.health import DependencyCheck
+    from tally_aloft.application.ports.job_queue import JobQueue
     from tally_aloft.application.shared.jobs.ports import (
         JobRepository,
         JobRunner,
@@ -27,3 +29,4 @@ _unit_of_work: JobRunnerUnitOfWork = FakeUnitOfWork(FakeDatabase(_clock))
 _job_table = FakeJobTable(rows={}, changed=set(), clock=_clock)
 _jobs: JobRepository = FakeJobRepository(_job_table)
 _job_runner: JobRunner = FakeJobRunner(_job_table)
+_job_queue: JobQueue = FakeJobQueue()
