@@ -270,6 +270,10 @@ async def test_sigterm_leaves_a_task_still_running_unacknowledged(
     [
         pytest.param({"TALLY_DATABASE_URL": None}, id="missing-setting"),
         pytest.param({"TALLY_BROKER_IDLE_TIMEOUT": "5"}, id="idle-timeout-too-short"),
+        pytest.param(
+            {"TALLY_DATABASE_STATEMENT_TIMEOUT": "31"},
+            id="statement-timeout-past-the-backstop",
+        ),
     ],
 )
 def test_a_worker_that_cannot_start_exits_non_zero(

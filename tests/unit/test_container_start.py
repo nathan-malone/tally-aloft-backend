@@ -1,7 +1,8 @@
-from typing import Self, override
+from typing import NoReturn, Self, override
 
 import pytest
 from docker.errors import APIError
+from testcontainers.core import container
 from testcontainers.core.container import DockerContainer
 
 from tests.support.containers import started
@@ -13,11 +14,22 @@ PORT_TAKEN = APIError(
 OTHER = APIError("500 Server Error", explanation="no such image")
 
 
+@pytest.fixture(autouse=True)
+def no_docker_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail a test here that builds a Docker client, which would need Docker."""
+
+    def refuse(**_kwargs: object) -> NoReturn:
+        pytest.fail("a fake container built a Docker client")
+
+    monkeypatch.setattr(container, "DockerClient", refuse)
+
+
 class FakeContainer(DockerContainer):
     """A container that fails to start with the errors it is given, in order."""
 
+    # `started` calls only start and stop, which the fake overrides.
+    # pyrefly: ignore[missing-super-call]  # The base's __init__ connects to Docker.
     def __init__(self, errors: list[APIError], log: list[str]) -> None:
-        super().__init__("unused:latest")
         self.errors = errors
         self.log = log
 

@@ -17,9 +17,12 @@ if TYPE_CHECKING:
 # covers the claim and the outcome's write at the default settings, each
 # waiting up to 30 seconds for a pooled connection, 5 to connect and 30 for
 # the statement timeout on its UPDATE, the one statement that can wait on a
-# lock. The 10 seconds' slack covers the codecs and cancelling the body and
-# the renewal. A higher statement timeout needs a higher backstop.
+# lock, plus `JOB_BACKSTOP_SLACK`. The worker refuses to start with a
+# statement timeout it doesn't cover.
 JOB_BACKSTOP = timedelta(seconds=140)
+# The rest of the wrapper's time outside the body's limit: the codecs, and
+# cancelling the body and the renewal.
+JOB_BACKSTOP_SLACK = timedelta(seconds=10)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
