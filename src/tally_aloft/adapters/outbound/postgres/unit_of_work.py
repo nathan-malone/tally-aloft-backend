@@ -2,6 +2,11 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from tally_aloft.adapters.outbound.postgres.jobs import (
+    PostgresJobRepository,
+    PostgresJobRunner,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
@@ -24,6 +29,8 @@ class PostgresUnitOfWork:
         self._sessions = sessions
         self._transaction: AbstractAsyncContextManager[AsyncSession] | None = None
         self._session: AsyncSession | None = None
+        self._jobs: PostgresJobRepository | None = None
+        self._job_runner: PostgresJobRunner | None = None
         self._used = False
 
     async def __aenter__(self) -> Self:
@@ -35,6 +42,8 @@ class PostgresUnitOfWork:
         transaction = self._sessions.begin()
         self._session = await transaction.__aenter__()
         self._transaction = transaction
+        self._jobs = PostgresJobRepository(self._session)
+        self._job_runner = PostgresJobRunner(self._session)
         return self
 
     async def __aexit__(
@@ -47,16 +56,33 @@ class PostgresUnitOfWork:
         transaction = self._transaction
         self._transaction = None
         self._session = None
+        self._jobs = None
+        self._job_runner = None
         if transaction is not None:
             _ = await transaction.__aexit__(exc_type, exc, traceback)
 
     @property
     def session(self) -> AsyncSession:
         """Return the open session, for the repositories built on it."""
-        if self._session is None:
-            msg = "the unit of work has no session outside `async with`"
-            raise RuntimeError(msg)
-        return self._session
+        return _opened(self._session)
+
+    @property
+    def jobs(self) -> PostgresJobRepository:
+        """Return the pilot-scoped job repository on the open session."""
+        return _opened(self._jobs)
+
+    @property
+    def job_runner(self) -> PostgresJobRunner:
+        """Return the unscoped job runner on the open session."""
+        return _opened(self._job_runner)
+
+
+def _opened[T](part: T | None) -> T:
+    """Return `part`, which exists only inside `async with`."""
+    if part is None:
+        msg = "the unit of work has no session outside `async with`"
+        raise RuntimeError(msg)
+    return part
 
 
 def unit_of_work_factory(engine: AsyncEngine) -> Callable[[], PostgresUnitOfWork]:

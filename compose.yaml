@@ -7,6 +7,10 @@
 #
 #   make containers.up    (docker compose --profile app up --build)
 #   make containers.down ARGS=--volumes    (also deletes the database)
+#
+# compose.e2e.yaml swaps the worker for the test worker, for end-to-end jobs:
+#
+#   make containers.e2e.up
 name: tally-aloft-backend
 
 services:
@@ -103,6 +107,35 @@ services:
       start_period: 10s
       start_interval: 1s
     # Compose's default of 10 seconds would kill the API mid-drain (25 seconds).
+    stop_grace_period: 30s
+
+  worker:
+    profiles: ["app"]
+    build: .
+    # The image contract's worker command. It serves no HTTP, so it has no
+    # health check: it is healthy while it runs.
+    command:
+      - taskiq
+      - worker
+      - tally_aloft.worker:broker
+      - --wait-tasks-timeout
+      - "25"
+      - --max-fails
+      - "1"
+      - --max-async-tasks
+      - "10"
+    environment:
+      TALLY_ENVIRONMENT: development
+      TALLY_DATABASE_URL: postgresql+asyncpg://tally_aloft_app:tally_aloft_app@postgres:5432/tally_aloft
+      TALLY_VALKEY_URL: redis://valkey:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Room for the worker's 25-second wait for running tasks.
     stop_grace_period: 30s
 
 volumes:

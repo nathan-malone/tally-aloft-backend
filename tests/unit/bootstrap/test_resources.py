@@ -4,7 +4,9 @@ from typing import NoReturn
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
+from taskiq_redis import RedisStreamBroker
 
+from tally_aloft.bootstrap.broker import build_broker
 from tally_aloft.bootstrap.resources import open_resources
 from tally_aloft.bootstrap.settings import Settings
 
@@ -31,6 +33,18 @@ def closed(monkeypatch: pytest.MonkeyPatch) -> list[Redis]:
 
     monkeypatch.setattr(Redis, "aclose", record)
     return clients
+
+
+@pytest.fixture
+def shut_down(monkeypatch: pytest.MonkeyPatch) -> list[RedisStreamBroker]:
+    """Record each broker that is shut down, instead of shutting it down."""
+    brokers: list[RedisStreamBroker] = []
+
+    async def record(self: RedisStreamBroker) -> None:
+        brokers.append(self)
+
+    monkeypatch.setattr(RedisStreamBroker, "shutdown", record)
+    return brokers
 
 
 async def test_disposes_the_engine_on_exit(disposed: list[AsyncEngine]) -> None:
@@ -81,3 +95,36 @@ async def test_opens_no_socket_on_entry(monkeypatch: pytest.MonkeyPatch) -> None
         async with open_resources(Settings.for_tests()) as resources:
             assert isinstance(resources.engine, AsyncEngine)
             assert isinstance(resources.cache_client, Redis)
+            assert isinstance(resources.broker, RedisStreamBroker)
+
+
+async def test_shuts_its_own_broker_down_on_exit(
+    shut_down: list[RedisStreamBroker],
+) -> None:
+    async with open_resources(Settings.for_tests()) as resources:
+        assert shut_down == []
+
+    assert shut_down == [resources.broker]
+
+
+async def test_shuts_its_own_broker_down_when_the_body_raises(
+    shut_down: list[RedisStreamBroker],
+) -> None:
+    msg = "body failed"
+
+    with pytest.raises(RuntimeError, match=msg):
+        async with open_resources(Settings.for_tests()):
+            raise RuntimeError(msg)
+
+    assert len(shut_down) == 1
+
+
+async def test_leaves_a_workers_broker_to_taskiq(
+    shut_down: list[RedisStreamBroker],
+) -> None:
+    broker = build_broker(Settings.for_tests())
+
+    async with open_resources(Settings.for_tests(), broker=broker) as resources:
+        assert resources.broker is broker
+
+    assert shut_down == []

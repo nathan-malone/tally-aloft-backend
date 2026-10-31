@@ -124,3 +124,12 @@ async def test_the_grants_revision_runs_only_as_the_owner(
         await asyncio.to_thread(upgrade, config)
 
     assert await current_revision(fresh_database) is None
+
+
+async def test_the_app_role_may_update_jobs_but_never_delete_them(
+    postgres_server: PostgresDatabase,
+) -> None:
+    await execute(postgres_server.app_url, "UPDATE jobs SET attempts = attempts")
+
+    delete = "DELETE FROM jobs"
+    assert await _sqlstate_as_app(postgres_server, delete) == INSUFFICIENT_PRIVILEGE

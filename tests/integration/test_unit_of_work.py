@@ -20,11 +20,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from tally_aloft.application.shared.jobs.ports import JobRunnerUnitOfWork
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
     from tests.support.postgres import PostgresDatabase
 
-# Pyrefly fails here if the adapter drifts from the Protocol use cases hold.
+# Pyrefly fails here if the adapter drifts from the Protocols use cases hold.
 _unit_of_work: SharedUnitOfWork = PostgresUnitOfWork(async_sessionmaker())
+_job_runner_unit_of_work: JobRunnerUnitOfWork = PostgresUnitOfWork(async_sessionmaker())
 
 
 @pytest.fixture
@@ -137,3 +139,21 @@ async def test_a_unit_of_work_is_entered_once(
 def test_the_session_exists_only_inside_async_with() -> None:
     with pytest.raises(RuntimeError):
         _ = PostgresUnitOfWork(async_sessionmaker()).session
+
+
+def test_the_job_repositories_exist_only_inside_async_with() -> None:
+    uow = PostgresUnitOfWork(async_sessionmaker())
+
+    with pytest.raises(RuntimeError):
+        _ = uow.jobs
+    with pytest.raises(RuntimeError):
+        _ = uow.job_runner
+
+
+@pytest.mark.container
+async def test_the_job_repositories_share_the_session(
+    make_unit_of_work: Callable[[], PostgresUnitOfWork],
+) -> None:
+    async with make_unit_of_work() as uow:
+        assert uow.jobs.session is uow.session
+        assert uow.job_runner.session is uow.session

@@ -70,3 +70,27 @@ def test_inbound_adapter_importing_outbound_breaks_a_contract(package: Path) -> 
 
     assert result.returncode != 0
     assert "Adapters are independent BROKEN" in result.stdout
+
+
+def test_the_job_queue_importing_the_task_functions_breaks_a_contract(
+    package: Path,
+) -> None:
+    probe = package / "adapters" / "outbound" / "taskiq" / "_probe.py"
+    probe.write_text("import tally_aloft.adapters.inbound.jobs.tasks\n")
+
+    result = _lint_imports(package)
+
+    assert result.returncode != 0
+    assert "Adapters are independent BROKEN" in result.stdout
+
+
+def test_a_job_use_case_importing_taskiq_breaks_a_contract(package: Path) -> None:
+    probe = package / "application" / "shared" / "jobs" / "_probe.py"
+    probe.write_text("import taskiq\n")
+
+    result = _lint_imports(package)
+
+    assert result.returncode != 0
+    assert "Domain and application have no framework or vendor code BROKEN" in (
+        result.stdout
+    )

@@ -281,9 +281,31 @@ def test_database_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.database_statement_timeout == 30
 
 
+def test_broker_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
+    settings = Settings()
+
+    assert settings.broker_idle_timeout == 900
+    assert settings.broker_stream_maxlen == 100000
+
+
+def test_reads_the_broker_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_BROKER_IDLE_TIMEOUT", "60")
+    monkeypatch.setenv("TALLY_BROKER_STREAM_MAXLEN", "1000")
+
+    settings = Settings()
+
+    assert settings.broker_idle_timeout == 60
+    assert settings.broker_stream_maxlen == 1000
+
+
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
+        ("TALLY_BROKER_IDLE_TIMEOUT", "0"),
+        ("TALLY_BROKER_STREAM_MAXLEN", "0"),
         ("TALLY_DATABASE_POOL_SIZE", "0"),
         ("TALLY_DATABASE_MAX_OVERFLOW", "-1"),
         ("TALLY_DATABASE_STATEMENT_TIMEOUT", "0"),
@@ -291,7 +313,7 @@ def test_database_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     ],
 )
 @pytest.mark.usefixtures("both_models")
-def test_rejects_out_of_range_database_numbers(
+def test_rejects_out_of_range_numbers(
     monkeypatch: pytest.MonkeyPatch, variable: str, value: str
 ) -> None:
     monkeypatch.setenv(variable, value)

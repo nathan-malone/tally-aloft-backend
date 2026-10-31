@@ -39,8 +39,12 @@ async def test_lifespan_sets_the_use_cases() -> None:
         assert isinstance(use_cases, UseCases)
         assert isinstance(use_cases.check_readiness, CheckReadiness)
         checks = use_cases.check_readiness.checks
-        assert [type(check) for check in checks] == [PostgresCheck, ValkeyCheck]
-        assert [check.name for check in checks] == ["postgres", "cache"]
+        assert [type(check) for check in checks] == [
+            PostgresCheck,
+            ValkeyCheck,
+            ValkeyCheck,
+        ]
+        assert [check.name for check in checks] == ["postgres", "cache", "broker"]
 
 
 async def test_livez_returns_200_and_is_not_in_the_schema() -> None:

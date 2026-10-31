@@ -108,6 +108,14 @@ class Settings(BaseSettings):
     # keys.
     valkey_url: SecretStr
 
+    # How long a worker's message may go unacknowledged before another worker
+    # may reclaim it. It must exceed every task's timeout, which the worker
+    # checks at import, or a slow task would run twice.
+    broker_idle_timeout: Annotated[int, Field(ge=1)] = 900
+    # The stream is trimmed to about this many messages. A trimmed message's
+    # job is recovered from its row.
+    broker_stream_maxlen: Annotated[int, Field(ge=1)] = 100000
+
     @field_validator("database_url")
     @classmethod
     def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:

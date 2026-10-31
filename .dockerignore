@@ -1,5 +1,6 @@
 # The build context is an allowlist: only what the image build needs.
-# Everything else, including .env, tests/ and .git, never reaches the build.
+# Everything else, including .env and .git, never reaches the build. tests/
+# reaches only the `dev` stage, which compose.e2e.yaml builds.
 *
 !pyproject.toml
 !uv.lock
@@ -7,4 +8,5 @@
 !src/
 !alembic.ini
 !migrations/
+!tests/
 **/__pycache__

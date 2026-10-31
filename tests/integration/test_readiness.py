@@ -87,7 +87,7 @@ async def test_not_ready_when_valkey_refuses_connections(
     )
 
     assert time.monotonic() - started < READYZ_DEADLINE_SECONDS
-    _assert_not_ready(response, ["cache"])
+    _assert_not_ready(response, ["cache", "broker"])
 
 
 @pytest.mark.container
@@ -103,7 +103,7 @@ async def test_not_ready_when_valkey_never_answers(
         )
 
         assert time.monotonic() - started < READYZ_DEADLINE_SECONDS
-    _assert_not_ready(response, ["cache"])
+    _assert_not_ready(response, ["cache", "broker"])
 
 
 async def test_not_ready_names_every_failed_check_in_order() -> None:
@@ -116,4 +116,23 @@ async def test_not_ready_names_every_failed_check_in_order() -> None:
         )
 
         assert time.monotonic() - started < READYZ_DEADLINE_SECONDS
-    _assert_not_ready(response, ["postgres", "cache"])
+    _assert_not_ready(response, ["postgres", "cache", "broker"])
+
+
+@pytest.mark.container
+async def test_not_ready_when_valkey_is_paused(
+    postgres_server: PostgresDatabase, valkey_server: ValkeyServer
+) -> None:
+    valkey = valkey_server.container.get_wrapped_container()
+    valkey.pause()
+    try:
+        started = time.monotonic()
+
+        response = await _readyz(
+            database_url=postgres_server.app_url, valkey_url=valkey_server.url
+        )
+
+        assert time.monotonic() - started < READYZ_DEADLINE_SECONDS
+    finally:
+        valkey.unpause()
+    _assert_not_ready(response, ["cache", "broker"])
