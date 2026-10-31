@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from alembic import command
-from alembic.autogenerate import produce_migrations
+from alembic.autogenerate import compare_metadata, produce_migrations
 from alembic.operations.ops import CreateTableOp
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import (
@@ -23,7 +23,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import DBAPIError
 
-from tally_aloft.adapters.outbound.postgres.tables import NAMING_CONVENTION, Base
+from tally_aloft.adapters.outbound.postgres.tables import (
+    NAMING_CONVENTION,
+    Base,
+    load_metadata,
+)
 from tests.support.migrations import (
     alembic_config,
     current_revision,
@@ -359,3 +363,19 @@ def test_upgrade_without_the_owner_url_names_the_variable() -> None:
     assert result.returncode != 0
     assert "TALLY_MIGRATION_DATABASE_URL (missing)" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.container
+async def test_the_migrations_match_the_table_models(
+    fresh_database: PostgresDatabase,
+) -> None:
+    await asyncio.to_thread(upgrade, alembic_config(fresh_database.owner_url))
+    metadata = load_metadata()
+
+    def differences(connection: Connection) -> list[object]:
+        return list(compare_metadata(MigrationContext.configure(connection), metadata))
+
+    async with connected(fresh_database.owner_url) as connection:
+        found = await connection.run_sync(differences)
+
+    assert found == []

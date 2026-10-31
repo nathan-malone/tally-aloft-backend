@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Protocol, Self
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from tally_aloft.application.shared.jobs.ports import JobRepository
+
 
 class SharedUnitOfWork(Protocol):
     """
@@ -13,6 +15,11 @@ class SharedUnitOfWork(Protocol):
     and the shared repositories join it as they're added. Nothing inside one
     runs concurrently, because a database session can't be shared by tasks.
     """
+
+    @property
+    def jobs(self) -> JobRepository:
+        """Return the pilot-scoped job repository on this unit of work."""
+        ...
 
     async def __aenter__(self) -> Self:
         """Begin the transaction."""

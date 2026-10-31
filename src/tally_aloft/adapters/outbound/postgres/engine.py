@@ -10,6 +10,9 @@ if TYPE_CHECKING:
 # How long asyncpg waits for a connection to open, so a stalled server raises
 # rather than hangs. The services and the migrations both use it.
 CONNECT_TIMEOUT_SECONDS = 5
+# How long a session waits for a pooled connection before it raises.
+# SQLAlchemy's default, set here because job tasks' backstop is sized from it.
+POOL_TIMEOUT_SECONDS = 30
 
 
 def connect_args(server_settings: Mapping[str, str]) -> dict[str, object]:
@@ -39,6 +42,7 @@ def build_engine(
         hide_parameters=True,
         pool_size=pool_size,
         max_overflow=max_overflow,
+        pool_timeout=POOL_TIMEOUT_SECONDS,
         connect_args=connect_args(
             {"statement_timeout": f"{statement_timeout_seconds}s"}
         ),

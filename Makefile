@@ -55,8 +55,11 @@ help:
 	$(info $()  image.build             Build the image as IMAGE (default $(IMAGE)), for PLATFORM if set)
 	$(info $()  datastores.up           Start the local data stores in containers and wait until they're healthy)
 	$(info $()  api.run                 Run the API on the host with reload, settings from .env)
+	$(info $()  worker.run              Run a worker on the host, settings from .env)
 	$(info $()  containers.up           Build and run the migrations and every process in containers)
 	$(info $()  containers.down         Stop and remove the containers; ARGS=--volumes also deletes the data)
+	$(info $()  containers.e2e.up       Like containers.up, with the test worker and its test-only jobs)
+	$(info $()  containers.e2e.job.run  Record a test job against the e2e containers and wait until it succeeds)
 	$(info )
 	$(info Migrations)
 	$(info $()  migrations.apply        Upgrade the database in .env to the latest migration)
@@ -164,6 +167,12 @@ datastores.up:
 api.run:
 	uv run --locked --env-file .env uvicorn tally_aloft.main:app --reload --no-proxy-headers
 
+# One worker process without reload, which Taskiq offers only with an extra.
+# The flags are the image contract's worker command.
+.PHONY: worker.run
+worker.run:
+	uv run --locked --env-file .env taskiq worker tally_aloft.worker:broker --wait-tasks-timeout 25 --max-fails 1 --max-async-tasks 10 --workers 1
+
 .PHONY: containers.up
 containers.up:
 	docker compose --profile app up --build
@@ -171,6 +180,16 @@ containers.up:
 .PHONY: containers.down
 containers.down:
 	docker compose --profile app down $(ARGS)
+
+# compose.e2e.yaml runs the test worker, built with tests/, in place of the
+# real one; containers.down stops it too.
+.PHONY: containers.e2e.up
+containers.e2e.up:
+	docker compose -f compose.yaml -f compose.e2e.yaml --profile app up --build
+
+.PHONY: containers.e2e.job.run
+containers.e2e.job.run:
+	docker compose -f compose.yaml -f compose.e2e.yaml exec worker python -m tests.support.e2e_job
 
 # Migrations connect as the owner role, from TALLY_MIGRATION_DATABASE_URL in
 # .env. Alembic accepts an empty message, so migrations.create checks NAME.

@@ -1,6 +1,10 @@
 # One image for the API, the workers and the scheduler; they differ by command.
 # The base is pinned by its multi-arch index digest, so the same file builds
 # linux/arm64 (CI and AWS) and linux/amd64 (x86 developer machines).
+#
+# Stages: `builder` installs the environment, `release` is the shipped image,
+# and `dev` adds tests/ for compose.e2e.yaml's test worker. The last stage is
+# the default target, so a plain build is always the release image.
 
 FROM python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS builder
 
@@ -26,7 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
 
-FROM python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
+FROM python:3.14-slim-trixie@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS release
 
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 
@@ -45,3 +49,14 @@ EXPOSE 8000
 # connections and drains in-flight requests for up to 25 seconds. Its own
 # proxy handling is off; create_app applies the trusted proxies from settings.
 CMD ["uvicorn", "tally_aloft.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--timeout-graceful-shutdown", "25"]
+
+
+# The release image plus tests/, so the test worker's job kinds can run in
+# Compose. Never shipped.
+FROM release AS dev
+
+COPY tests ./tests
+
+
+# The default target: the release image, with no tests.
+FROM release

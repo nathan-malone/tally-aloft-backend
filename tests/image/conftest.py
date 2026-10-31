@@ -7,7 +7,13 @@ import pytest
 from docker.types import IPAMConfig, IPAMPool, Mount
 from filelock import FileLock
 
-from tests.support.containers import IMAGE_VARIABLE, LOCAL_TAG, docker_cli, unique_name
+from tests.support.containers import (
+    HOST_GATEWAY,
+    IMAGE_VARIABLE,
+    LOCAL_TAG,
+    docker_cli,
+    unique_name,
+)
 from tests.support.paths import ROOT
 from tests.support.server import API_APP, PROBE_APP
 
@@ -98,3 +104,33 @@ def started_containers() -> Generator[list[Container]]:
     yield containers
     for container in containers:
         container.remove(force=True)
+
+
+@pytest.fixture
+def start_worker(
+    docker_client: docker.DockerClient,
+    api_image: Image,
+    tests_mount: Mount,
+    started_containers: list[Container],
+) -> Callable[[list[str], dict[str, str]], Container]:
+    """
+    Start a container running `command` from the image, with `tests/` mounted.
+
+    It reaches servers published on this host through `host.docker.internal`.
+    It returns at once; a test that needs the worker listening waits for that.
+    """
+
+    def start(command: list[str], environment: dict[str, str]) -> Container:
+        container = docker_client.containers.run(
+            api_image,
+            command,
+            detach=True,
+            name=unique_name("worker"),
+            environment=environment,
+            mounts=[tests_mount],
+            extra_hosts=HOST_GATEWAY,
+        )
+        started_containers.append(container)
+        return container
+
+    return start

@@ -3,12 +3,8 @@ from datetime import UTC, datetime, timedelta
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-class ManualTime:
-    """
-    A time source that moves only when a test advances it.
-
-    It stands in for the `Clock` port until STORY-05 adds it and its fake.
-    """
+class FakeClock:
+    """A clock that moves only when a test advances it."""
 
     def __init__(self, start: datetime = _START) -> None:
         self._now = start

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tally_aloft.adapters.outbound.redis.client import build_client
 from tests.support.migrations import alembic_config, upgrade
 from tests.support.postgres import (
     PostgresDatabase,
@@ -16,6 +17,8 @@ from tests.support.valkey import ValkeyServer, flush, running_valkey
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterator
+
+    from redis.asyncio import Redis
 
 
 @pytest.fixture(scope="session")
@@ -72,3 +75,11 @@ async def valkey_url(valkey_server: ValkeyServer) -> AsyncGenerator[str]:
     """The shared Valkey's URL: every key is deleted after the test."""
     yield valkey_server.url
     await flush(valkey_server.url)
+
+
+@pytest.fixture
+async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
+    """A client on the shared Valkey, for reading what a test left there."""
+    client = build_client(valkey_url)
+    yield client
+    await client.aclose()
