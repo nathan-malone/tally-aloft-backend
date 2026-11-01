@@ -159,7 +159,7 @@ async def _job_is(
     return (row.status, row.attempts) == (status, attempts)
 
 
-def test_the_image_imports_the_worker_with_only_the_sweeper(
+def test_the_image_imports_the_worker_with_the_production_tasks(
     start_worker: Callable[[list[str], dict[str, str]], Container],
 ) -> None:
     command = [

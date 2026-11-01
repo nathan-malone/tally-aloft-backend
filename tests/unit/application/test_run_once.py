@@ -17,6 +17,7 @@ from tests.support.idempotency import (
     RECEIPT_CODEC,
     IdempotentWrite,
     WriteCommand,
+    write_command,
 )
 
 if TYPE_CHECKING:
@@ -34,18 +35,6 @@ def write(database: FakeDatabase) -> IdempotentWrite:
     return IdempotentWrite(fake_unit_of_work_factory(database))
 
 
-def _command(
-    actor: PilotId | None = None, *, request_hash: str = "hash-1", fail: bool = False
-) -> WriteCommand:
-    return WriteCommand(
-        actor=PilotId.new() if actor is None else actor,
-        key="key-1",
-        request_hash=request_hash,
-        note="one hour",
-        fail=fail,
-    )
-
-
 def _request(command: WriteCommand) -> IdempotencyRequest:
     return IdempotencyRequest(
         command.actor, OPERATION, command.key, command.request_hash
@@ -55,7 +44,7 @@ def _request(command: WriteCommand) -> IdempotencyRequest:
 async def test_a_first_call_runs_once_and_stores_its_encoded_result(
     write: IdempotentWrite, database: FakeDatabase
 ) -> None:
-    command = _command()
+    command = write_command()
 
     receipt = await write(command)
 
@@ -95,7 +84,7 @@ async def test_a_first_call_returns_its_result_as_a_repeat_would(
 async def test_a_repeat_returns_the_stored_result_without_running(
     write: IdempotentWrite, database: FakeDatabase
 ) -> None:
-    command = _command()
+    command = write_command()
     first = await write(command)
 
     repeat = await write(command)
@@ -107,11 +96,11 @@ async def test_a_repeat_returns_the_stored_result_without_running(
 async def test_a_repeat_with_another_hash_is_refused(
     write: IdempotentWrite, database: FakeDatabase
 ) -> None:
-    command = _command()
+    command = write_command()
     _ = await write(command)
 
     with pytest.raises(IdempotencyKeyReusedError) as error:
-        _ = await write(_command(command.actor, request_hash="hash-2"))
+        _ = await write(write_command(command.actor, request_hash="hash-2"))
 
     assert error.value.code == "idempotency_key_reused"
     assert len(database.jobs) == 1
@@ -120,14 +109,14 @@ async def test_a_repeat_with_another_hash_is_refused(
 async def test_an_action_that_raises_keeps_no_key_and_a_retry_runs(
     write: IdempotentWrite, database: FakeDatabase
 ) -> None:
-    command = _command(fail=True)
+    command = write_command(fail=True)
 
     with pytest.raises(RuntimeError, match="the test write failed"):
         _ = await write(command)
 
     assert database.idempotency_keys == {}
     assert database.jobs == {}
-    receipt = await write(_command(command.actor))
+    receipt = await write(write_command(command.actor))
     assert list(database.jobs) == [receipt.job_id]
 
 
@@ -159,8 +148,8 @@ async def test_an_encode_that_raises_keeps_no_key(database: FakeDatabase) -> Non
 async def test_two_actors_with_one_key_each_run_once(
     write: IdempotentWrite, database: FakeDatabase
 ) -> None:
-    first = await write(_command())
-    second = await write(_command())
+    first = await write(write_command())
+    second = await write(write_command())
 
     assert first != second
     assert len(database.jobs) == 2
@@ -189,15 +178,11 @@ class VanishingKeys(FakeIdempotencyRepository):
     """Keys that conflict on insert, then are gone when read."""
 
     @override
-    async def reserve(
-        self, request: IdempotencyRequest
-    ) -> bool:  # The Protocol's signature.
+    async def reserve(self, request: IdempotencyRequest) -> bool:
         return False
 
     @override
-    async def find(
-        self, request: IdempotencyRequest
-    ) -> StoredKey | None:  # The Protocol's signature.
+    async def find(self, request: IdempotencyRequest) -> StoredKey | None:
         return None
 
 
@@ -208,7 +193,7 @@ class VanishingUnitOfWork(FakeUnitOfWork):
         return VanishingKeys(super().idempotency.table)
 
 
-async def _never() -> int:
+async def _never() -> JsonValue:
     msg = "the action must not run"
     raise AssertionError(msg)
 
@@ -220,7 +205,7 @@ async def test_a_key_deleted_between_insert_and_read_raises(
 
     with pytest.raises(RuntimeError, match="deleted while it was being read"):
         async with VanishingUnitOfWork(database) as uow:
-            _ = await run_once(uow, request, _never, FailingCodec())
+            _ = await run_once(uow, request, _never, JSON)
 
 
 async def test_a_key_committed_without_a_result_raises(database: FakeDatabase) -> None:
@@ -234,4 +219,4 @@ async def test_a_key_committed_without_a_result_raises(database: FakeDatabase) -
 
     with pytest.raises(RuntimeError, match="committed without a result"):
         async with FakeUnitOfWork(database) as uow:
-            _ = await run_once(uow, request, _never, FailingCodec())
+            _ = await run_once(uow, request, _never, JSON)

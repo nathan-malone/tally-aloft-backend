@@ -11,9 +11,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from tally_aloft.adapters.outbound.postgres.engine import build_engine
+from tally_aloft.adapters.outbound.postgres.tables.idempotency_keys import (
+    IdempotencyKeyRecord,
+)
+from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.application.shared.errors import IdempotencyKeyReusedError
 from tally_aloft.application.shared.idempotency import IdempotencyRequest, run_once
@@ -22,8 +26,8 @@ from tests.support.idempotency import (
     OPERATION,
     RECEIPT_CODEC,
     IdempotentWrite,
-    WriteCommand,
     record_receipt,
+    write_command,
 )
 from tests.support.in_process_worker import eventually
 from tests.support.postgres import APP_ROLE, connected
@@ -33,6 +37,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from tally_aloft.adapters.outbound.postgres.tables import Base
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
     from tests.support.idempotency import WriteReceipt
     from tests.support.postgres import PostgresDatabase
@@ -65,64 +70,52 @@ def uow(engine: AsyncEngine) -> Callable[[], SharedUnitOfWork]:
     return unit_of_work_factory(engine)
 
 
-async def _count(database: PostgresDatabase, table: str) -> int:
+async def _count(database: PostgresDatabase, table: type[Base]) -> int:
     async with connected(database.app_url) as connection:
-        result = await connection.execute(text(f"SELECT count(*) FROM {table}"))  # noqa: S608  # A fixed table name.
-        return result.scalar_one()
-
-
-def _command(
-    actor: PilotId | None = None, *, request_hash: str = "hash-1", fail: bool = False
-) -> WriteCommand:
-    return WriteCommand(
-        actor=PilotId.new() if actor is None else actor,
-        key="key-1",
-        request_hash=request_hash,
-        note="one hour",
-        fail=fail,
-    )
+        statement = select(func.count()).select_from(table)
+        return (await connection.execute(statement)).scalar_one()
 
 
 async def test_a_first_call_writes_once_and_a_repeat_replays_it(
     uow: Callable[[], SharedUnitOfWork], database: PostgresDatabase
 ) -> None:
     write = IdempotentWrite(uow)
-    command = _command()
+    command = write_command()
 
     first = await write(command)
     repeat = await write(command)
 
     assert repeat == first
-    assert await _count(database, "jobs") == 1
-    assert await _count(database, "idempotency_keys") == 1
+    assert await _count(database, JobRecord) == 1
+    assert await _count(database, IdempotencyKeyRecord) == 1
 
 
 async def test_a_repeat_with_another_hash_is_refused(
     uow: Callable[[], SharedUnitOfWork], database: PostgresDatabase
 ) -> None:
     write = IdempotentWrite(uow)
-    command = _command()
+    command = write_command()
     _ = await write(command)
 
     with pytest.raises(IdempotencyKeyReusedError):
-        _ = await write(_command(command.actor, request_hash="hash-2"))
+        _ = await write(write_command(command.actor, request_hash="hash-2"))
 
-    assert await _count(database, "jobs") == 1
+    assert await _count(database, JobRecord) == 1
 
 
 async def test_a_failed_write_keeps_nothing_and_a_retry_runs(
     uow: Callable[[], SharedUnitOfWork], database: PostgresDatabase
 ) -> None:
     write = IdempotentWrite(uow)
-    command = _command(fail=True)
+    command = write_command(fail=True)
 
     with pytest.raises(RuntimeError, match="the test write failed"):
         _ = await write(command)
 
-    assert await _count(database, "jobs") == 0
-    assert await _count(database, "idempotency_keys") == 0
-    _ = await write(_command(command.actor))
-    assert await _count(database, "jobs") == 1
+    assert await _count(database, JobRecord) == 0
+    assert await _count(database, IdempotencyKeyRecord) == 0
+    _ = await write(write_command(command.actor))
+    assert await _count(database, JobRecord) == 1
 
 
 async def test_two_actors_with_one_key_each_write_once(
@@ -130,12 +123,12 @@ async def test_two_actors_with_one_key_each_write_once(
 ) -> None:
     write = IdempotentWrite(uow)
 
-    first = await write(_command())
-    second = await write(_command())
+    first = await write(write_command())
+    second = await write(write_command())
 
     assert first != second
-    assert await _count(database, "jobs") == 2
-    assert await _count(database, "idempotency_keys") == 2
+    assert await _count(database, JobRecord) == 2
+    assert await _count(database, IdempotencyKeyRecord) == 2
 
 
 @dataclass
@@ -193,10 +186,10 @@ async def _wait_for_lock_waiters(database: PostgresDatabase, count: int) -> None
 async def _together(
     held: HeldWrite,
     calls: list[Coroutine[object, object, WriteReceipt]],
-    coordinate: Callable[[], Awaitable[None]],
+    coordinate: Callable[[list[asyncio.Task[WriteReceipt]]], Awaitable[None]],
 ) -> list[WriteReceipt | BaseException]:
     """
-    Run `calls` and `coordinate` together, and return each call's outcome.
+    Run `calls`, then `coordinate` with their tasks, and return each outcome.
 
     Whatever happens, the held action is released and every call is ended
     before this returns, so a failing test never leaves a transaction open.
@@ -204,7 +197,7 @@ async def _together(
     tasks = [asyncio.create_task(call) for call in calls]
     try:
         async with asyncio.timeout(TEST_DEADLINE_SECONDS):
-            await coordinate()
+            await coordinate(tasks)
             held.release.set()
             return await asyncio.gather(*tasks, return_exceptions=True)
     finally:
@@ -235,14 +228,16 @@ async def test_a_repeat_waits_for_the_first_call_and_returns_its_result(
     request = _request()
     first = await _start_first(held, request)
 
-    async def coordinate() -> None:
+    async def coordinate(tasks: list[asyncio.Task[WriteReceipt]]) -> None:
         await _wait_for_lock_waiters(database, 1)
+        # The repeat waits on the first call's key row, still uncommitted.
+        assert not any(task.done() for task in tasks)
 
     [repeat] = await _together(held, [held(request)], coordinate)
 
     assert repeat == await first
     assert held.runs == 1
-    assert await _count(database, "jobs") == 1
+    assert await _count(database, JobRecord) == 1
 
 
 async def test_a_repeat_runs_fresh_when_the_first_call_rolls_back(
@@ -252,7 +247,7 @@ async def test_a_repeat_runs_fresh_when_the_first_call_rolls_back(
     request = _request()
     first = await _start_first(held, request)
 
-    async def coordinate() -> None:
+    async def coordinate(_tasks: list[asyncio.Task[WriteReceipt]]) -> None:
         await _wait_for_lock_waiters(database, 1)
 
     [repeat] = await _together(held, [held(request)], coordinate)
@@ -261,8 +256,8 @@ async def test_a_repeat_runs_fresh_when_the_first_call_rolls_back(
         _ = await first
     assert not isinstance(repeat, BaseException), repeat
     assert held.runs == 2
-    assert await _count(database, "jobs") == 1
-    assert await _count(database, "idempotency_keys") == 1
+    assert await _count(database, JobRecord) == 1
+    assert await _count(database, IdempotencyKeyRecord) == 1
 
 
 async def test_twenty_concurrent_calls_run_the_action_once(
@@ -276,7 +271,7 @@ async def test_twenty_concurrent_calls_run_the_action_once(
         _ = await barrier.wait()
         return await held(request)
 
-    async def coordinate() -> None:
+    async def coordinate(_tasks: list[asyncio.Task[WriteReceipt]]) -> None:
         await _wait_for_lock_waiters(database, CALLS - 1)
 
     outcomes = await _together(held, [call() for _ in range(CALLS)], coordinate)
@@ -285,5 +280,5 @@ async def test_twenty_concurrent_calls_run_the_action_once(
     assert all(outcome == first for outcome in outcomes), outcomes
     assert not isinstance(first, BaseException)
     assert held.runs == 1
-    assert await _count(database, "jobs") == 1
-    assert await _count(database, "idempotency_keys") == 1
+    assert await _count(database, JobRecord) == 1
+    assert await _count(database, IdempotencyKeyRecord) == 1

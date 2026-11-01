@@ -13,6 +13,7 @@ from uuid import UUID
 
 from tally_aloft.application.shared.idempotency import IdempotencyRequest, run_once
 from tally_aloft.application.shared.jobs.kinds import JobId
+from tally_aloft.domain.shared.ids import PilotId
 from tests.support.jobs import ECHO
 
 if TYPE_CHECKING:
@@ -20,7 +21,6 @@ if TYPE_CHECKING:
 
     from tally_aloft.application.shared.codec import JsonValue
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
-    from tally_aloft.domain.shared.ids import PilotId
 
 OPERATION = "test.idempotent_write"
 
@@ -35,6 +35,19 @@ class WriteCommand:
     note: str
     # Raise after the write, inside the unit of work.
     fail: bool = False
+
+
+def write_command(
+    actor: PilotId | None = None, *, request_hash: str = "hash-1", fail: bool = False
+) -> WriteCommand:
+    """Return a command for key `key-1`, by a new pilot unless one is given."""
+    return WriteCommand(
+        actor=PilotId.new() if actor is None else actor,
+        key="key-1",
+        request_hash=request_hash,
+        note="one hour",
+        fail=fail,
+    )
 
 
 @dataclass(frozen=True, slots=True)

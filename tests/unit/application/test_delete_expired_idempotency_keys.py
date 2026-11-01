@@ -7,11 +7,12 @@ from tally_aloft.application.shared.delete_expired_idempotency_keys import (
     DELETE_BATCH_SIZE,
     DeleteExpiredIdempotencyKeys,
 )
-from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.clock import FakeClock
-from tests.fakes.database import FakeDatabase, FakeIdempotencyRow, FakeKeyId
+from tests.fakes.database import FakeDatabase, FakeKeyId
+from tests.fakes.idempotency import key_id
 from tests.fakes.unit_of_work import FakeUnitOfWork, fake_unit_of_work_factory
 from tests.support.counting import CountingFactory
+from tests.support.idempotency_rows import seed_fake_keys
 
 NOW = datetime(2026, 6, 1, 12, tzinfo=UTC)
 
@@ -22,17 +23,9 @@ def database() -> FakeDatabase:
 
 
 def _seed(database: FakeDatabase, count: int, age: timedelta) -> list[FakeKeyId]:
-    """Store `count` keys of one new pilot, created `age` before `NOW`."""
-    actor = PilotId.new()
-    keys: list[FakeKeyId] = [(actor, "test.cleanup", f"key-{n}") for n in range(count)]
-    for key in keys:
-        database.idempotency_keys[key] = FakeIdempotencyRow(
-            request_hash="hash",
-            result=None,
-            has_result=True,
-            created_at=NOW - age,
-        )
-    return keys
+    """Commit `count` keys of one new pilot, created `age` before `NOW`."""
+    requests = seed_fake_keys(database, count, created_at=NOW - age)
+    return [key_id(request) for request in requests]
 
 
 def _cleanup(
@@ -84,3 +77,8 @@ async def test_a_short_batch_ends_the_run(
 
     assert database.idempotency_keys == {}
     assert factory.made == units_of_work
+
+
+def test_a_batch_size_below_1_is_rejected(database: FakeDatabase) -> None:
+    with pytest.raises(ValueError, match="batch size of at least 1"):
+        _ = _cleanup(database, batch_size=0)

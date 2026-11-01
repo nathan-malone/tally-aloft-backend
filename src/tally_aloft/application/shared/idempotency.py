@@ -128,6 +128,8 @@ async def run_once[T](
     The first call stores the encoded result before the commit and returns it
     decoded, as every repeat does, so all of them return equal results. A
     repeat with a different `request_hash` raises `IdempotencyKeyReusedError`.
+    A stored result outlives a deploy, so `codec` must keep decoding what any
+    release encoded in the last 25 hours.
     """
     if await uow.idempotency.reserve(request):
         encoded = codec.encode(await action())
@@ -140,8 +142,7 @@ async def run_once[T](
         msg = "the idempotency key was deleted while it was being read"
         raise RuntimeError(msg)
     if stored.request_hash != request.request_hash:
-        msg = "This Idempotency-Key was already used for a different request."
-        raise IdempotencyKeyReusedError(msg)
+        raise IdempotencyKeyReusedError
     if not stored.has_result:
         # Only a use case that caught run_once's error and committed leaves this.
         msg = "the idempotency key was committed without a result"

@@ -15,10 +15,10 @@ from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_fac
 from tally_aloft.application.shared.idempotency import IdempotencyRequest, StoredKey
 from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.clock import FakeClock
-from tests.fakes.database import FakeDatabase, FakeIdempotencyRow
+from tests.fakes.database import FakeDatabase
 from tests.fakes.idempotency import key_id
 from tests.fakes.unit_of_work import fake_unit_of_work_factory
-from tests.support.idempotency_rows import REQUEST_HASH, insert_keys
+from tests.support.idempotency_rows import insert_keys, seed_fake_keys
 from tests.support.postgres import connected
 
 if TYPE_CHECKING:
@@ -70,19 +70,7 @@ def fake_case() -> IdempotencyCase:
         return StoredKey(row.request_hash, row.result, row.has_result)
 
     async def insert(count: int, created_at: datetime) -> list[IdempotencyRequest]:
-        actor = PilotId.new()
-        requests = [
-            _request(actor, key=f"key-{n}", request_hash=REQUEST_HASH)
-            for n in range(1, count + 1)
-        ]
-        for request in requests:
-            database.idempotency_keys[key_id(request)] = FakeIdempotencyRow(
-                request_hash=REQUEST_HASH,
-                result=None,
-                has_result=False,
-                created_at=created_at,
-            )
-        return requests
+        return seed_fake_keys(database, count, created_at=created_at)
 
     return IdempotencyCase(fake_unit_of_work_factory(database), read, insert)
 

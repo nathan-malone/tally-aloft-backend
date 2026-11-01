@@ -35,6 +35,12 @@ class DeleteExpiredIdempotencyKeys:
     retention: timedelta = KEY_RETENTION
     batch_size: int = DELETE_BATCH_SIZE
 
+    def __post_init__(self) -> None:
+        """Reject a batch size that could never end the run."""
+        if self.batch_size < 1:
+            msg = "the idempotency cleanup needs a batch size of at least 1"
+            raise ValueError(msg)
+
     async def __call__(self) -> int:
         """Delete the expired keys, and return how many were deleted."""
         cutoff = self.clock.now() - self.retention
