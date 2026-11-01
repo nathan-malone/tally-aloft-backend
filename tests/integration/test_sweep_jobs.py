@@ -24,6 +24,7 @@ from tally_aloft.application.shared.jobs.claim_job import ClaimJob
 from tally_aloft.application.shared.jobs.kinds import (
     ATTEMPTS_EXHAUSTED_CODE,
     UNKNOWN_KIND_CODE,
+    JobKind,
     JobStatus,
 )
 from tally_aloft.application.shared.jobs.sweep_jobs import SweepJobs
@@ -31,6 +32,7 @@ from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.bootstrap.worker import create_worker
 from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.job_queue import FakeJobQueue
+from tests.support.codecs import JSON
 from tests.support.in_process_worker import eventually, kick, running_worker
 from tests.support.job_rows import backdate, insert_jobs
 from tests.support.jobs import ECHO, TEST_IDLE_TIMEOUT, RecordTestJob
@@ -52,7 +54,8 @@ STALE_AFTER = timedelta(seconds=Settings.for_tests().job_stale_after)
 STALE = STALE_AFTER + timedelta(minutes=1)
 FRESH = STALE_AFTER - timedelta(minutes=1)
 EXPIRED = timedelta(seconds=-1)
-REMOVED = "test.removed"
+# A kind no worker registers.
+REMOVED = JobKind(name="test.removed", payload_codec=JSON, result_codec=JSON)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +105,7 @@ def _ids(queue: FakeJobQueue) -> list[JobId]:
 
 
 async def test_a_stale_queued_job_is_dispatched_once(engine: AsyncEngine) -> None:
-    [job] = await insert_jobs(engine, ECHO.name, dispatched_ago=STALE)
+    [job] = await insert_jobs(engine, ECHO, dispatched_ago=STALE)
     queue = FakeJobQueue()
 
     await _sweep(engine, queue)()
@@ -112,7 +115,7 @@ async def test_a_stale_queued_job_is_dispatched_once(engine: AsyncEngine) -> Non
 
 
 async def test_a_fresh_queued_job_is_not_dispatched(engine: AsyncEngine) -> None:
-    _ = await insert_jobs(engine, ECHO.name, dispatched_ago=FRESH)
+    _ = await insert_jobs(engine, ECHO, dispatched_ago=FRESH)
     queue = FakeJobQueue()
 
     await _sweep(engine, queue)()
@@ -143,7 +146,7 @@ async def test_an_expired_running_job_is_dispatched_once_per_threshold(
 ) -> None:
     [job] = await insert_jobs(
         engine,
-        ECHO.name,
+        ECHO,
         status=JobStatus.RUNNING,
         attempts=1,
         dispatched_ago=STALE,
@@ -170,7 +173,7 @@ async def test_a_last_attempt_with_a_valid_lease_is_left_alone(
 ) -> None:
     [job] = await insert_jobs(
         engine,
-        ECHO.name,
+        ECHO,
         status=JobStatus.RUNNING,
         attempts=ECHO.max_attempts,
         dispatched_ago=STALE,
@@ -190,10 +193,10 @@ async def test_exhausted_jobs_are_failed_and_not_dispatched(
     engine: AsyncEngine,
 ) -> None:
     exhausted = {"attempts": ECHO.max_attempts, "dispatched_ago": STALE}
-    [queued] = await insert_jobs(engine, ECHO.name, **exhausted)
+    [queued] = await insert_jobs(engine, ECHO, **exhausted)
     [running] = await insert_jobs(
         engine,
-        ECHO.name,
+        ECHO,
         status=JobStatus.RUNNING,
         lease_ends_in=EXPIRED,
         **exhausted,
@@ -225,7 +228,7 @@ async def test_a_job_of_an_unknown_kind_is_failed_and_not_dispatched(
 
 
 async def test_one_sweep_dispatches_at_most_a_batch(engine: AsyncEngine) -> None:
-    _ = await insert_jobs(engine, ECHO.name, 1200, dispatched_ago=STALE)
+    _ = await insert_jobs(engine, ECHO, 1200, dispatched_ago=STALE)
     queue = FakeJobQueue()
 
     await _sweep(engine, queue, batch_size=500)()
@@ -235,7 +238,7 @@ async def test_one_sweep_dispatches_at_most_a_batch(engine: AsyncEngine) -> None
 
 
 async def test_one_sweep_fails_at_most_a_batch(engine: AsyncEngine) -> None:
-    _ = await insert_jobs(engine, ECHO.name, 1200, attempts=ECHO.max_attempts)
+    _ = await insert_jobs(engine, ECHO, 1200, attempts=ECHO.max_attempts)
 
     await _sweep(engine, FakeJobQueue(), batch_size=500)()
 
@@ -246,10 +249,10 @@ async def test_one_sweep_fails_at_most_a_batch(engine: AsyncEngine) -> None:
 
 async def _stale_mix(engine: AsyncEngine) -> list[JobId]:
     """Insert 50 stale `queued` jobs and 50 expired, stale `running` ones."""
-    queued = await insert_jobs(engine, ECHO.name, 50, dispatched_ago=STALE)
+    queued = await insert_jobs(engine, ECHO, 50, dispatched_ago=STALE)
     running = await insert_jobs(
         engine,
-        ECHO.name,
+        ECHO,
         50,
         status=JobStatus.RUNNING,
         attempts=1,
@@ -302,7 +305,7 @@ async def test_concurrent_and_back_to_back_sweeps_dispatch_each_job_once(
 async def test_a_failed_dispatch_leaves_the_rest_of_the_batch_dispatched(
     engine: AsyncEngine, caplog: pytest.LogCaptureFixture
 ) -> None:
-    jobs = await insert_jobs(engine, ECHO.name, 3, dispatched_ago=STALE)
+    jobs = await insert_jobs(engine, ECHO, 3, dispatched_ago=STALE)
     queue = FakeJobQueue(failing={jobs[1]})
 
     with caplog.at_level(logging.WARNING):
@@ -323,7 +326,7 @@ async def test_the_sweeper_task_recovers_a_job_that_was_never_dispatched(
         broker_idle_timeout=int(TEST_IDLE_TIMEOUT.total_seconds()),
     )
     [job] = await insert_jobs(
-        engine, ECHO.name, dispatched_ago=timedelta(minutes=10), payload={"n": 1}
+        engine, ECHO, dispatched_ago=timedelta(minutes=10), payload={"n": 1}
     )
     broker = create_worker(settings, TEST_TASKS)
 

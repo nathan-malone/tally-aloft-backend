@@ -147,7 +147,8 @@ async def test_each_step_stops_at_the_batch_size(
 ) -> None:
     stale = [await _record(database) for _ in range(2)]
     clock.advance(PAST_THE_THRESHOLD)
-    # Fresh, so the second, if step 1 leaves it, isn't stale enough to take.
+    # Recorded after the clock moved, so they aren't stale: only step 1 can
+    # touch them, and step 2's only candidates are the two stale jobs.
     unknown = [await _record_unknown(database) for _ in range(2)]
     queue = FakeJobQueue()
 

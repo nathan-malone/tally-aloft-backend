@@ -14,7 +14,7 @@ from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.domain.shared.ids import PilotId
 from tests.support.jobs import ECHO, RecordingFailedError, RecordTestJob
 from tests.support.postgres import connected
-from tests.support.valkey import stream_data
+from tests.support.valkey import stream_data, stream_messages
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -52,7 +52,7 @@ async def test_the_message_carries_only_the_job_id(
     job = await use_case(PilotId.new(), PAYLOAD)
 
     [data] = await stream_data(valkey, STREAM)
-    message = broker.formatter.loads(data)
+    [message] = await stream_messages(valkey, broker)
 
     assert message.task_name == ECHO.name
     assert message.args == [str(job.id.value)]

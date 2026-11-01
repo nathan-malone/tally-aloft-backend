@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
-from tally_aloft.bootstrap.broker import STREAM, build_broker
+from tally_aloft.bootstrap.broker import build_broker
 from tally_aloft.bootstrap.settings import Settings
 from tests.support.containers import from_container
 from tests.support.in_process_worker import eventually
-from tests.support.valkey import stream_data
+from tests.support.valkey import stream_messages
 from tests.support.worker_command import (
     SCHEDULER_MODULE,
     TEST_SCHEDULER_MODULE,
@@ -24,11 +24,12 @@ from tests.support.worker_command import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncGenerator, Callable
 
     from docker.models.containers import Container
     from redis.asyncio import Redis
     from taskiq import TaskiqMessage
+    from taskiq_redis import RedisStreamBroker
 
 pytestmark = pytest.mark.container
 
@@ -50,13 +51,17 @@ def environment(valkey_url: str) -> dict[str, str]:
     }
 
 
-async def _sweeps(valkey: Redis) -> list[TaskiqMessage]:
-    """Return every sweeper message on the broker's stream, oldest first."""
+@pytest.fixture
+async def decoder() -> AsyncGenerator[RedisStreamBroker]:
+    """A broker that never connects, for decoding the stream's messages."""
     broker = build_broker(Settings.for_tests())
-    messages = [
-        broker.formatter.loads(data) for data in await stream_data(valkey, STREAM)
-    ]
+    yield broker
     await broker.shutdown()
+
+
+async def _sweeps(valkey: Redis, decoder: RedisStreamBroker) -> list[TaskiqMessage]:
+    """Return every sweeper message on the broker's stream, oldest first."""
+    messages = await stream_messages(valkey, decoder)
     return [message for message in messages if message.task_name == SWEEP_TASK.name]
 
 
@@ -64,14 +69,15 @@ async def test_the_scheduler_kicks_the_sweeper_without_a_database(
     start_scheduler: Callable[[list[str], dict[str, str]], Container],
     environment: dict[str, str],
     valkey: Redis,
+    decoder: RedisStreamBroker,
 ) -> None:
     scheduler = start_scheduler(scheduler_command(SCHEDULER_MODULE), environment)
 
     async def kicked() -> bool:
-        return len(await _sweeps(valkey)) > 0
+        return len(await _sweeps(valkey, decoder)) > 0
 
     await eventually(kicked, within=KICK_SECONDS)
-    [first, *_] = await _sweeps(valkey)
+    [first, *_] = await _sweeps(valkey, decoder)
     scheduler.reload()
     status = scheduler.status
     started = time.monotonic()
@@ -89,11 +95,12 @@ async def test_the_scheduler_kicks_on_the_test_schedule(
     start_scheduler: Callable[[list[str], dict[str, str]], Container],
     environment: dict[str, str],
     valkey: Redis,
+    decoder: RedisStreamBroker,
 ) -> None:
     scheduler = start_scheduler(scheduler_command(TEST_SCHEDULER_MODULE), environment)
 
     async def kicked_three_times() -> bool:
-        return len(await _sweeps(valkey)) >= 3
+        return len(await _sweeps(valkey, decoder)) >= 3
 
     await eventually(kicked_three_times, within=KICK_SECONDS)
     scheduler.reload()

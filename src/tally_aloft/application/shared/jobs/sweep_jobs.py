@@ -37,7 +37,8 @@ class SweepJobs:
     batch_size: int
 
     async def __call__(self) -> None:
-        """Fail unrunnable jobs, then take stale ones, then dispatch those."""
+        """Run the sweep's steps: fail, select, then dispatch."""
+        # Fail: jobs that have used every attempt, or whose kind is unknown.
         async with self.uow() as uow:
             failed = await uow.job_runner.fail_unrunnable(
                 self.kind_names, self.batch_size
@@ -46,6 +47,8 @@ class SweepJobs:
             _logger.warning(
                 "Job %s (%s) failed: %s", job.id.value, job.kind_name, job.error_code
             )
+        # Select: stale jobs, marked dispatched now, committed before dispatch.
         async with self.uow() as uow:
             taken = await uow.job_runner.take_stale(self.stale_after, self.batch_size)
+        # Dispatch: each taken job, logging any that fails, never raising.
         await dispatch_safely(self.queue, taken)

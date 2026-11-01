@@ -31,22 +31,24 @@ async def broker() -> AsyncGenerator[RedisStreamBroker]:
     await broker.shutdown()
 
 
+@pytest.fixture
+async def roomy_broker() -> AsyncGenerator[RedisStreamBroker]:
+    """A broker whose idle_timeout, 51 seconds, has room for the sweeper's 50."""
+    broker = build_broker(Settings.for_tests(broker_idle_timeout=51))
+    yield broker
+    await broker.shutdown()
+
+
 def test_an_empty_list_registers_nothing(broker: RedisStreamBroker) -> None:
     register_tasks(broker, [])
 
     assert broker.get_all_tasks() == {}
 
 
-async def test_the_production_list_registers() -> None:
-    # The sweeper's 50-second timeout doesn't fit the fixture's 10 seconds.
-    broker = build_broker(Settings.for_tests(broker_idle_timeout=51))
-    try:
-        register_tasks(broker, TASKS)
-        registered = set(broker.get_all_tasks())
-    finally:
-        await broker.shutdown()
+def test_the_production_list_registers(roomy_broker: RedisStreamBroker) -> None:
+    register_tasks(roomy_broker, TASKS)
 
-    assert registered == {task.name for task in TASKS}
+    assert set(roomy_broker.get_all_tasks()) == {task.name for task in TASKS}
 
 
 def test_the_production_list_holds_the_sweeper() -> None:
@@ -79,13 +81,11 @@ async def test_the_idle_timeout_check_counts_the_sweeper(
     assert registered == ({SWEEP_TASK.name} if fits else set())
 
 
-async def test_a_scheduled_task_gets_a_schedule_label_named_after_it() -> None:
-    broker = build_broker(Settings.for_tests(broker_idle_timeout=51))
-    try:
-        register_tasks(broker, [SWEEP_TASK])
-        labels = broker.get_all_tasks()[SWEEP_TASK.name].labels
-    finally:
-        await broker.shutdown()
+def test_a_scheduled_task_gets_a_schedule_label_named_after_it(
+    roomy_broker: RedisStreamBroker,
+) -> None:
+    register_tasks(roomy_broker, [SWEEP_TASK])
+    labels = roomy_broker.get_all_tasks()[SWEEP_TASK.name].labels
 
     assert labels["timeout"] == 50.0
     assert labels["schedule"] == [{"interval": 60, "schedule_id": "jobs.sweep"}]

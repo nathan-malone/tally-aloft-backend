@@ -4,7 +4,7 @@
 # stays as it is: the test worker registers the sweeper it kicks.
 #
 #   make containers.e2e.up        (docker compose -f compose.yaml -f compose.e2e.yaml --profile app up --build)
-#   make containers.e2e.job.run   (records a test job and waits for it)
+#   make containers.e2e.job.run   (runs a dispatched and a never-dispatched test job, and waits for both)
 services:
   worker:
     build:

@@ -58,6 +58,8 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
     @asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncGenerator[None]:
         async with open_resources(settings) as resources:
+            # The API never sweeps; the kind names only keep its registry
+            # built the same way as a worker's.
             api.state.use_cases = build_use_cases(
                 settings, resources, resolved_overrides, job_kind_names(TASKS)
             )

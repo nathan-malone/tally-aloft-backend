@@ -47,6 +47,21 @@ def _exhausted() -> ColumnElement[bool]:
     return JobRecord.attempts >= JobRecord.max_attempts
 
 
+def _locked_ids(candidates: Select[UUID], limit: int) -> CTE:
+    """
+    Return the IDs of up to `limit` of `candidates`, locked, skipping locked rows.
+
+    `MATERIALIZED` makes Postgres run the locking select once, so the update
+    joined to it can't touch more than `limit` rows.
+    """
+    return (
+        candidates.limit(limit)
+        .with_for_update(skip_locked=True)
+        .cte("locked")
+        .prefix_with("MATERIALIZED")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresJobRepository:
     """The pilot-scoped `JobRepository` on one unit of work's session."""
@@ -76,8 +91,10 @@ class PostgresJobRunner:
     """
     The unscoped `JobRunner` on one unit of work's session.
 
-    Leases compare with the database's `now()`, so every worker uses the
-    same clock. Each write after the claim is fenced on the claimed attempts.
+    Leases and staleness compare with the database's `now()`, so every worker
+    and sweep uses the same clock. A task's writes after its claim are fenced
+    on the claimed attempts; the sweeper's two writes aren't, and lock the
+    rows they take with `SKIP LOCKED` instead.
     """
 
     session: AsyncSession
@@ -159,10 +176,10 @@ class PostgresJobRunner:
                 or_(and_(_lease_expired(), _exhausted()), unknown),
             ),
         )
-        picked = _picked(select(JobRecord.id).where(unrunnable), limit)
+        locked = _locked_ids(select(JobRecord.id).where(unrunnable), limit)
         statement = (
             update(JobRecord)
-            .where(JobRecord.id == picked.c.id)
+            .where(JobRecord.id == locked.c.id)
             .values(
                 status=JobStatus.FAILED,
                 error_code=case(
@@ -188,10 +205,10 @@ class PostgresJobRunner:
             )
             .order_by(JobRecord.last_dispatched_at)
         )
-        picked = _picked(stale, limit)
+        locked = _locked_ids(stale, limit)
         statement = (
             update(JobRecord)
-            .where(JobRecord.id == picked.c.id)
+            .where(JobRecord.id == locked.c.id)
             .values(last_dispatched_at=func.now(), updated_at=func.now())
             .returning(JobRecord.id, JobRecord.kind)
             .execution_options(**_NO_SYNC)
@@ -215,18 +232,3 @@ class PostgresJobRunner:
             .execution_options(**_NO_SYNC)
         )
         return (await self.session.execute(statement)).scalar_one_or_none() is not None
-
-
-def _picked(candidates: Select[UUID], limit: int) -> CTE:
-    """
-    Return the IDs of up to `limit` of `candidates`, locked, skipping locked rows.
-
-    `MATERIALIZED` makes Postgres run the locking select once, so the update
-    joined to it can't touch more than `limit` rows.
-    """
-    return (
-        candidates.limit(limit)
-        .with_for_update(skip_locked=True)
-        .cte("picked")
-        .prefix_with("MATERIALIZED")
-    )

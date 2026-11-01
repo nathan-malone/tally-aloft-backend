@@ -296,3 +296,15 @@ def test_the_e2e_override_leaves_the_scheduler_alone(
     scheduler = _rendered("compose.yaml", "compose.e2e.yaml")["scheduler"]
 
     assert scheduler == scheduler_service
+
+
+@pytest.mark.parametrize(
+    "files", [("compose.yaml",), ("compose.yaml", "compose.e2e.yaml")]
+)
+@pytest.mark.parametrize("service", ["worker", "scheduler"])
+def test_the_jobs_keep_the_default_sweep_settings(
+    files: tuple[str, ...], service: str
+) -> None:
+    variables = _environment(_rendered(*files)[service]).keys()
+
+    assert {"TALLY_JOB_STALE_AFTER", "TALLY_SWEEP_BATCH_SIZE"}.isdisjoint(variables)

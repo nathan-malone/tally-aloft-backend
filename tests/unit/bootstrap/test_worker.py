@@ -61,9 +61,11 @@ async def test_the_scheduler_reads_the_registered_schedules_without_connecting()
     assert isinstance(source, LabelScheduleSource)
     assert source.broker is broker
 
-    await source.startup()
-    [schedule] = await source.get_schedules()
-    await broker.shutdown()
+    try:
+        await source.startup()
+        [schedule] = await source.get_schedules()
+    finally:
+        await broker.shutdown()
 
     assert schedule.task_name == "jobs.sweep"
     assert schedule.schedule_id == "jobs.sweep"

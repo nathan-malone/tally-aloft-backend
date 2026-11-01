@@ -140,13 +140,16 @@ def start_scheduler(
     docker_client: docker.DockerClient,
     api_image: Image,
     tests_mount: Mount,
+    valkey_url: str,  # noqa: ARG001  # Set up first, so it is flushed after the container goes.
     started_containers: list[Container],
 ) -> Callable[[list[str], dict[str, str]], Container]:
     """
     Start a scheduler container, as `start_worker` does, under an init process.
 
     Compose runs the scheduler with `init: true`, because Taskiq's scheduler
-    has no `SIGTERM` handler, which PID 1 needs to stop on one.
+    has no `SIGTERM` handler, which PID 1 needs to stop on one. The container
+    is removed before this run's Valkey is flushed, so a kick it sends late
+    can't reach the next test.
     """
 
     def start(command: list[str], environment: dict[str, str]) -> Container:

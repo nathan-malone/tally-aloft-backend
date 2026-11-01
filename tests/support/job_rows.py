@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from tally_aloft.application.shared.codec import JsonValue
+    from tally_aloft.application.shared.jobs.kinds import JobKind
 
 # Times are relative to the database's `now()`, the clock the sweeper reads.
 _INSERT = text(
@@ -51,33 +52,32 @@ _BACKDATE = text(
 )
 
 
-async def insert_jobs(  # noqa: PLR0913  # Each argument is a column a test sets.
+async def insert_jobs[P, R](  # noqa: PLR0913  # Each argument is a column a test sets.
     engine: AsyncEngine,
-    kind_name: str,
+    kind: JobKind[P, R],
     count: int = 1,
     *,
     status: JobStatus = JobStatus.QUEUED,
     attempts: int = 0,
-    max_attempts: int = 5,
     dispatched_ago: timedelta = timedelta(0),
     lease_ends_in: timedelta | None = None,
     payload: JsonValue = None,
 ) -> list[JobId]:
     """
-    Insert `count` jobs of `kind_name`, and return their IDs.
+    Insert `count` jobs of `kind`, with its `max_attempts`, and return their IDs.
 
-    Each was last dispatched `dispatched_ago` before now. `lease_ends_in`,
-    negative for a lease that has expired, sets `lease_until`; `None` leaves
-    the job unleased.
+    `payload` is stored as it is, already encoded. Each was last dispatched
+    `dispatched_ago` before now. `lease_ends_in`, negative for a lease that has
+    expired, sets `lease_until`; `None` leaves the job unleased.
     """
     async with engine.begin() as connection:
         result = await connection.execute(
             _INSERT,
             {
-                "kind": kind_name,
+                "kind": kind.name,
                 "status": status,
                 "attempts": attempts,
-                "max_attempts": max_attempts,
+                "max_attempts": kind.max_attempts,
                 "payload": json.dumps(payload),
                 "lease_ends_in": lease_ends_in,
                 "dispatched_ago": dispatched_ago,

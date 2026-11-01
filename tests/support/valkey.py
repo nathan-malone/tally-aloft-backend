@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from redis.asyncio import Redis
+    from taskiq import AsyncBroker, TaskiqMessage
 
 # The one place the tests' Valkey version is set; compose.yaml must match it.
 VALKEY_IMAGE = "valkey/valkey:9"
@@ -51,6 +52,14 @@ async def stream_data(client: Redis, stream: str) -> list[bytes]:
         "list[tuple[bytes, dict[bytes, bytes]]]", await client.xrange(stream)
     )
     return [fields[b"data"] for _, fields in entries]
+
+
+async def stream_messages(
+    client: Redis, broker: AsyncBroker, stream: str = STREAM
+) -> list[TaskiqMessage]:
+    """Return each message in `stream`, oldest first, decoded as `broker` does."""
+    data = await stream_data(client, stream)
+    return [broker.formatter.loads(entry) for entry in data]
 
 
 async def count(client: Redis, key: str) -> int:

@@ -39,7 +39,7 @@ async def main() -> int:
         dispatched = (await record(PilotId.new(), {"from": "e2e"})).id
         [stale] = await insert_jobs(
             resources.engine,
-            ECHO.name,
+            ECHO,
             dispatched_ago=_LOST_DISPATCH,
             payload={"from": "e2e, never dispatched"},
         )

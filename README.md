@@ -73,7 +73,7 @@ Only one scheduler may run against one set of data stores: each one kicks every 
 make containers.up
 ```
 
-This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only, a `worker` with the image's worker command, and once Valkey is healthy, one `scheduler` with the image's scheduler command. The worker and the scheduler serve no HTTP and have no health check. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only, and a `worker` with the image's worker command. One `scheduler`, with the image's scheduler command, starts as soon as Valkey is healthy, without waiting for the migrations. The worker and the scheduler serve no HTTP and have no health check. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
 
 The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
 
