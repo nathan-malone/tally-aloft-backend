@@ -159,13 +159,16 @@ async def _job_is(
     return (row.status, row.attempts) == (status, attempts)
 
 
-def test_the_image_imports_the_worker_with_no_tasks(
+def test_the_image_imports_the_worker_with_only_the_sweeper(
     start_worker: Callable[[list[str], dict[str, str]], Container],
 ) -> None:
     command = [
         "python",
         "-c",
-        "import tally_aloft.worker as w; print(len(w.broker.get_all_tasks()))",
+        (
+            "import tally_aloft.worker as w; "
+            "print(*sorted(w.broker.get_all_tasks()), type(w.scheduler).__name__)"
+        ),
     ]
     container = start_worker(
         command,
@@ -175,7 +178,8 @@ def test_the_image_imports_the_worker_with_no_tasks(
     result = container.wait(timeout=EXIT_SECONDS)
 
     assert result["StatusCode"] == 0, container.logs().decode()
-    assert container.logs(stdout=True, stderr=False).decode().strip() == "0"
+    output = container.logs(stdout=True, stderr=False).decode().strip()
+    assert output == "jobs.sweep TaskiqScheduler"
 
 
 async def test_a_killed_workers_message_is_redelivered(

@@ -32,13 +32,25 @@ class TaskDefinition:
 
     `name` is the task's stable name, which messages carry. `timeout` is
     Taskiq's limit on the whole function. A job task names the kind it runs
-    in `kind_name`; other tasks, such as scheduled ones, leave it `None`.
+    in `kind_name`; other tasks, such as scheduled ones, leave it `None`. A
+    scheduled task sets `every`, a whole number of seconds, and the scheduler
+    kicks it that often, and once when the scheduler starts.
     """
 
     name: str
     function: Callable[..., Awaitable[object]]
     timeout: timedelta
     kind_name: str | None = None
+    every: timedelta | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a schedule the scheduler would refuse when it starts."""
+        if self.every is None:
+            return
+        seconds = self.every.total_seconds()
+        if seconds < 1 or not seconds.is_integer():
+            msg = f"task {self.name} needs `every` of whole seconds, at least 1"
+            raise ValueError(msg)
 
 
 def job_task[P, R](

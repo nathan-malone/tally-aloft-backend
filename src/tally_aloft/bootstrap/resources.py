@@ -37,9 +37,10 @@ async def open_resources(
     worker's startup alike. They close even when the body raises.
 
     The API passes no `broker`, so one is built here and closed on exit. It
-    never connects at startup: only workers create the consumer group, so the
-    API starts while Valkey is down. A worker passes its own
-    broker, which Taskiq starts and shuts down, so it is left open here.
+    never connects at startup: workers and the scheduler create the consumer
+    group, never the API, so the API starts while Valkey is down. A worker
+    passes its own broker, which Taskiq starts and shuts down, so it is left
+    open here.
     """
     async with AsyncExitStack() as stack:
         engine = build_engine(

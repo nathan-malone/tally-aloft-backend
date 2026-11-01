@@ -2,7 +2,8 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from taskiq import TaskiqEvents
+from taskiq import TaskiqEvents, TaskiqScheduler
+from taskiq.schedule_sources import LabelScheduleSource
 
 from tally_aloft.adapters.inbound.jobs.labels import RegisteredLabelsMiddleware
 from tally_aloft.adapters.inbound.jobs.tasks import JOB_BACKSTOP, JOB_BACKSTOP_SLACK
@@ -60,6 +61,17 @@ def create_worker(
     broker.add_event_handler(TaskiqEvents.WORKER_SHUTDOWN, stop)
     register_tasks(broker, tasks)
     return broker
+
+
+def create_scheduler(broker: RedisStreamBroker) -> TaskiqScheduler:
+    """
+    Return the scheduler, which kicks each registered task's schedule.
+
+    It reads the schedules from the tasks `create_worker` registered. Its
+    process starts the broker, which creates the consumer group, but runs no
+    worker startup handler, so it never opens the database.
+    """
+    return TaskiqScheduler(broker, [LabelScheduleSource(broker)])
 
 
 def _check_statement_timeout(settings: Settings) -> None:

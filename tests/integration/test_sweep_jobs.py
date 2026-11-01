@@ -3,7 +3,8 @@ The sweeper on real Postgres: what it fails, what it re-dispatches, and once.
 
 Time is simulated by backdating rows in SQL, against the database's `now()`,
 so no test waits out a threshold. Dispatches go to a `FakeJobQueue`, which
-records each one.
+records each one, except in the last test, which runs the sweeper task in the
+test worker on real Valkey.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.application.shared.jobs.claim_job import ClaimJob
@@ -26,11 +28,14 @@ from tally_aloft.application.shared.jobs.kinds import (
 )
 from tally_aloft.application.shared.jobs.sweep_jobs import SweepJobs
 from tally_aloft.bootstrap.settings import Settings
+from tally_aloft.bootstrap.worker import create_worker
 from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.job_queue import FakeJobQueue
+from tests.support.in_process_worker import eventually, kick, running_worker
 from tests.support.job_rows import backdate, insert_jobs
-from tests.support.jobs import ECHO, RecordTestJob
+from tests.support.jobs import ECHO, TEST_IDLE_TIMEOUT, RecordTestJob
 from tests.support.postgres import connected
+from tests.support.tasks import TEST_TASKS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -307,3 +312,24 @@ async def test_a_failed_dispatch_leaves_the_rest_of_the_batch_dispatched(
     [record] = caplog.records
     assert str(jobs[1].value) in record.getMessage()
     assert ECHO.name in record.getMessage()
+
+
+async def test_the_sweeper_task_recovers_a_job_that_was_never_dispatched(
+    database: PostgresDatabase, valkey_url: str, engine: AsyncEngine
+) -> None:
+    settings = Settings.for_tests(
+        database_url=database.app_url,
+        valkey_url=valkey_url,
+        broker_idle_timeout=int(TEST_IDLE_TIMEOUT.total_seconds()),
+    )
+    [job] = await insert_jobs(
+        engine, ECHO.name, dispatched_ago=timedelta(minutes=10), payload={"n": 1}
+    )
+    broker = create_worker(settings, TEST_TASKS)
+
+    async def succeeded() -> bool:
+        return (await _row(engine, job)).status == JobStatus.SUCCEEDED
+
+    async with running_worker(broker):
+        await kick(broker, SWEEP_TASK.name)
+        await eventually(succeeded)

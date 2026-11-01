@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
@@ -30,9 +31,9 @@ if TYPE_CHECKING:
     from tally_aloft.bootstrap.settings import Settings
     from tally_aloft.domain.shared.errors import CodedError
 
-# Every task the production worker runs. Job kinds and scheduled tasks join
-# it as features and maintenance jobs are built.
-TASKS: tuple[TaskDefinition, ...] = ()
+# Every task the production worker runs, and the scheduler schedules. Job
+# kinds and scheduled tasks join it as features and maintenance jobs are built.
+TASKS: tuple[TaskDefinition, ...] = (SWEEP_TASK,)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -104,7 +105,9 @@ def register_tasks(broker: RedisStreamBroker, tasks: Sequence[TaskDefinition]) -
     """
     Register `tasks` on `broker`, each under its name with its timeout.
 
-    It raises `ValueError`, registering nothing, when two tasks share a name,
+    A scheduled task's `every` becomes Taskiq's `schedule` label, which the
+    scheduler reads, with the task's name as the schedule's ID. It raises
+    `ValueError`, registering nothing, when two tasks share a name,
     which Taskiq would silently resolve to the last, or when the broker's idle
     timeout isn't greater than the longest task timeout: another worker could
     then reclaim a message whose task is still running.
@@ -125,8 +128,19 @@ def register_tasks(broker: RedisStreamBroker, tasks: Sequence[TaskDefinition]) -
         raise ValueError(msg)
     for task in tasks:
         _ = broker.register_task(
-            task.function, task_name=task.name, timeout=task.timeout.total_seconds()
+            task.function,
+            task_name=task.name,
+            timeout=task.timeout.total_seconds(),
+            **_schedule_label(task),
         )
+
+
+def _schedule_label(task: TaskDefinition) -> dict[str, object]:
+    """Return the `schedule` label for a scheduled task, or no labels."""
+    if task.every is None:
+        return {}
+    interval = int(task.every.total_seconds())
+    return {"schedule": [{"interval": interval, "schedule_id": task.name}]}
 
 
 def _seconds(duration: timedelta) -> str:
