@@ -135,7 +135,7 @@ class FakeJobRunner:
         return True
 
     async def fail_unrunnable(
-        self, kind_names: frozenset[str], limit: int
+        self, kind_names: frozenset[str], stale_after: timedelta, limit: int
     ) -> list[FailedJob]:
         """Fail up to `limit` free jobs that can never run."""
         now = self.table.clock.now()
@@ -144,7 +144,8 @@ class FakeJobRunner:
             if len(failed) >= limit:
                 break
             unknown = row.kind not in kind_names
-            if not _free(row, now) or not (unknown or _exhausted(row)):
+            stale_unknown = unknown and _stale(row, now, stale_after)
+            if not _free(row, now) or not (stale_unknown or _exhausted(row)):
                 continue
             code = UNKNOWN_KIND_CODE if unknown else ATTEMPTS_EXHAUSTED_CODE
             self.table.put(
@@ -161,7 +162,7 @@ class FakeJobRunner:
                 row
                 for row in self.table.rows.values()
                 if not _exhausted(row)
-                and row.last_dispatched_at < now - stale_after
+                and _stale(row, now, stale_after)
                 and _free(row, now)
             ),
             key=lambda row: row.last_dispatched_at,
@@ -180,6 +181,11 @@ class FakeJobRunner:
 def _exhausted(row: FakeJobRow) -> bool:
     """Return whether `row` has used every attempt its kind allows."""
     return row.attempts >= row.max_attempts
+
+
+def _stale(row: FakeJobRow, now: datetime, stale_after: timedelta) -> bool:
+    """Return whether `row` was last dispatched over `stale_after` ago."""
+    return row.last_dispatched_at < now - stale_after
 
 
 def _free(row: FakeJobRow, now: datetime) -> bool:

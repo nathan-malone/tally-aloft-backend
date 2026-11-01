@@ -64,15 +64,18 @@ class JobRunner(Protocol):
         ...
 
     async def fail_unrunnable(
-        self, kind_names: frozenset[str], limit: int
+        self, kind_names: frozenset[str], stale_after: timedelta, limit: int
     ) -> list[FailedJob]:
         """
         Mark `failed` up to `limit` jobs that can never run again, and return them.
 
         Those are `queued` jobs, and `running` ones whose lease has expired,
         that have used `max_attempts` (`attempts_exhausted`), or whose kind
-        isn't in `kind_names` (`unknown_kind`, which wins over exhaustion). A
-        valid lease means a worker that has the kind is running the job.
+        isn't in `kind_names` and that were last dispatched over `stale_after`
+        ago (`unknown_kind`, which wins over exhaustion). A valid lease means
+        a worker that has the kind may still own the job. The threshold gives
+        a job recorded before every worker has its kind time to be run. An
+        exhausted job fails at once whatever its kind.
         """
         ...
 

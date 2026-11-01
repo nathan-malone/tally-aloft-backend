@@ -411,7 +411,7 @@ async def _fail_unrunnable(
     case: JobsCase, kind_names: frozenset[str] = REGISTERED, limit: int = 100
 ) -> list[FailedJob]:
     async with case.uow() as uow:
-        return await uow.job_runner.fail_unrunnable(kind_names, limit)
+        return await uow.job_runner.fail_unrunnable(kind_names, STALE_AFTER, limit)
 
 
 async def _take_stale(case: JobsCase, limit: int = 100) -> list[QueuedJob]:
@@ -427,6 +427,11 @@ async def _running(
     async with case.uow() as uow:
         assert await uow.job_runner.claim(job.id, kind.name, KIND.lease) is not None
     return job
+
+
+async def _make_stale(case: JobsCase, *jobs: QueuedJob) -> None:
+    for job in jobs:
+        await case.age(job.id, STALE_AFTER + timedelta(seconds=30))
 
 
 async def _outcome(case: JobsCase, job: QueuedJob) -> tuple[str, str | None, bool]:
@@ -475,6 +480,7 @@ async def test_jobs_of_an_unknown_kind_fail(case: JobsCase) -> None:
     await case.expire_lease(running.id)
     exhausted = await _record(case, OTHER_KIND)
     await case.force(exhausted.id, JobStatus.QUEUED, OTHER_KIND.max_attempts)
+    await _make_stale(case, queued, running, exhausted)
 
     failed = await _fail_unrunnable(case)
 
@@ -488,11 +494,40 @@ async def test_jobs_of_an_unknown_kind_fail(case: JobsCase) -> None:
         )
 
 
+async def test_a_fresh_job_of_an_unknown_kind_is_left_until_it_is_stale(
+    case: JobsCase,
+) -> None:
+    # A job recorded during a rollout, before every worker has its kind.
+    queued = await _record(case, OTHER_KIND)
+    running = await _running(case, OTHER_KIND)
+    await case.expire_lease(running.id)
+    for job in (queued, running):
+        await case.age(job.id, STALE_AFTER - timedelta(seconds=30))
+    before = [await _state(case, job) for job in (queued, running)]
+
+    assert await _fail_unrunnable(case) == []
+    assert [await _state(case, job) for job in (queued, running)] == before
+
+
+async def test_a_fresh_exhausted_job_of_an_unknown_kind_fails_at_once(
+    case: JobsCase,
+) -> None:
+    job = await _record(case, OTHER_KIND)
+    await case.force(job.id, JobStatus.QUEUED, OTHER_KIND.max_attempts)
+    await case.age(job.id, STALE_AFTER - timedelta(seconds=30))
+
+    assert await _fail_unrunnable(case) == [
+        FailedJob(job.id, OTHER_KIND.name, UNKNOWN_KIND_CODE)
+    ]
+    assert await _outcome(case, job) == (JobStatus.FAILED, UNKNOWN_KIND_CODE, False)
+
+
 async def test_a_running_job_of_an_unknown_kind_is_left_until_its_lease_expires(
     case: JobsCase,
 ) -> None:
-    # A valid lease means a worker that has the kind is running it.
+    # A valid lease means a worker that has the kind may still own it.
     job = await _running(case, OTHER_KIND)
+    await _make_stale(case, job)
     before = await _state(case, job)
 
     assert await _fail_unrunnable(case) == []
@@ -505,6 +540,7 @@ async def test_with_no_registered_kinds_every_free_job_is_unknown(
     queued = await _record(case)
     running = await _running(case)
     await case.expire_lease(running.id)
+    await _make_stale(case, queued, running)
 
     failed = await _fail_unrunnable(case, frozenset())
 
@@ -530,6 +566,7 @@ async def test_runnable_and_finished_jobs_are_not_failed(case: JobsCase) -> None
 
 async def test_fail_unrunnable_stops_at_its_limit(case: JobsCase) -> None:
     jobs = [await _record(case, OTHER_KIND) for _ in range(3)]
+    await _make_stale(case, *jobs)
 
     failed = await _fail_unrunnable(case, limit=2)
 

@@ -47,6 +47,11 @@ def _exhausted() -> ColumnElement[bool]:
     return JobRecord.attempts >= JobRecord.max_attempts
 
 
+def _stale(stale_after: timedelta) -> ColumnElement[bool]:
+    """Return whether a row was last dispatched over `stale_after` ago."""
+    return JobRecord.last_dispatched_at < func.now() - stale_after
+
+
 def _locked_ids(candidates: Select[UUID], limit: int) -> CTE:
     """
     Return the IDs of up to `limit` of `candidates`, locked, skipping locked rows.
@@ -164,11 +169,11 @@ class PostgresJobRunner:
         )
 
     async def fail_unrunnable(
-        self, kind_names: frozenset[str], limit: int
+        self, kind_names: frozenset[str], stale_after: timedelta, limit: int
     ) -> list[FailedJob]:
         """Fail up to `limit` free jobs that can never run, skipping locked rows."""
         unknown = JobRecord.kind.not_in(sorted(kind_names))
-        never = or_(_exhausted(), unknown)
+        never = or_(_exhausted(), and_(unknown, _stale(stale_after)))
         # Grouped by status, so each branch can use that status's partial index.
         unrunnable = or_(
             and_(JobRecord.status == JobStatus.QUEUED, never),
@@ -198,7 +203,7 @@ class PostgresJobRunner:
             select(JobRecord.id)
             .where(
                 ~_exhausted(),
-                JobRecord.last_dispatched_at < func.now() - stale_after,
+                _stale(stale_after),
                 _free(),
             )
             .order_by(JobRecord.last_dispatched_at)

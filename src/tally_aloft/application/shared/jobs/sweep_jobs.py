@@ -31,17 +31,18 @@ class SweepJobs:
 
     uow: Callable[[], JobRunnerUnitOfWork]
     queue: JobQueue
-    # The job kinds the workers register. A job of any other kind fails.
+    # The job kinds the workers register. A job of any other kind fails once
+    # it is stale.
     kind_names: frozenset[str]
     stale_after: timedelta
     batch_size: int
 
     async def __call__(self) -> None:
         """Run the sweep's steps: fail, select, then dispatch."""
-        # Fail: jobs that have used every attempt, or whose kind is unknown.
+        # Fail: jobs that have used every attempt, or stale ones of unknown kind.
         async with self.uow() as uow:
             failed = await uow.job_runner.fail_unrunnable(
-                self.kind_names, self.batch_size
+                self.kind_names, self.stale_after, self.batch_size
             )
         for job in failed:
             _logger.warning(

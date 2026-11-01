@@ -80,6 +80,14 @@ async def _record_unknown(database: FakeDatabase) -> QueuedJob:
     return QueuedJob(job.id, REMOVED)
 
 
+async def _record_exhausted(database: FakeDatabase) -> QueuedJob:
+    """Record a job that has used every attempt."""
+    job = await _record(database)
+    row = database.jobs[job.id]
+    database.jobs[job.id] = replace(row, attempts=row.max_attempts)
+    return job
+
+
 async def test_a_stale_job_is_dispatched(
     database: FakeDatabase, clock: FakeClock
 ) -> None:
@@ -124,10 +132,11 @@ async def test_jobs_are_dispatched_after_their_commit(
     assert queue.seen == [(ECHO.name, clock.now())]
 
 
-async def test_a_job_of_an_unknown_kind_is_failed_and_logged(
-    database: FakeDatabase, caplog: pytest.LogCaptureFixture
+async def test_a_stale_job_of_an_unknown_kind_is_failed_and_logged(
+    database: FakeDatabase, clock: FakeClock, caplog: pytest.LogCaptureFixture
 ) -> None:
     job = await _record_unknown(database)
+    clock.advance(PAST_THE_THRESHOLD)
     queue = FakeJobQueue()
 
     with caplog.at_level(logging.WARNING):
@@ -142,19 +151,32 @@ async def test_a_job_of_an_unknown_kind_is_failed_and_logged(
     assert UNKNOWN_KIND_CODE in message
 
 
+async def test_a_fresh_job_of_an_unknown_kind_is_left_queued(
+    database: FakeDatabase, clock: FakeClock
+) -> None:
+    job = await _record_unknown(database)
+    clock.advance(STALE_AFTER - timedelta(minutes=1))
+    queue = FakeJobQueue()
+
+    await _sweep(database, queue)()
+
+    assert database.jobs[job.id].status == JobStatus.QUEUED
+    assert queue.dispatched == []
+
+
 async def test_each_step_stops_at_the_batch_size(
     database: FakeDatabase, clock: FakeClock
 ) -> None:
     stale = [await _record(database) for _ in range(2)]
     clock.advance(PAST_THE_THRESHOLD)
-    # Recorded after the clock moved, so they aren't stale: only step 1 can
-    # touch them, and step 2's only candidates are the two stale jobs.
-    unknown = [await _record_unknown(database) for _ in range(2)]
+    # Exhausted, so only step 1 can touch them, and step 2's only candidates
+    # are the two stale jobs.
+    exhausted = [await _record_exhausted(database) for _ in range(2)]
     queue = FakeJobQueue()
 
     await _sweep(database, queue, batch_size=1)()
 
-    statuses = sorted(database.jobs[job.id].status for job in unknown)
+    statuses = sorted(database.jobs[job.id].status for job in exhausted)
     assert statuses == [JobStatus.FAILED, JobStatus.QUEUED]
     assert len(queue.dispatched) == 1
     assert queue.dispatched[0][0] in {job.id for job in stale}

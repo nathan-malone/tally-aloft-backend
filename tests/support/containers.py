@@ -73,26 +73,50 @@ def from_container(url: str) -> str:
 def started[ContainerT: DockerContainer](
     make: Callable[[], ContainerT],
 ) -> Generator[ContainerT]:
+    """Start the container `make` builds, and remove it on exit."""
+    container = _start_retrying(
+        make, lambda made: made.start(), lambda made: made.stop()
+    )
+    try:
+        yield container
+    finally:
+        container.stop()
+
+
+def start_retrying[ContainerT: Container](
+    create: Callable[[], ContainerT],
+) -> ContainerT:
+    """Start the Docker SDK container `create` creates, as `started` does."""
+    return _start_retrying(
+        create, lambda made: made.start(), lambda made: made.remove(force=True)
+    )
+
+
+def _start_retrying[ContainerT](
+    make: Callable[[], ContainerT],
+    start: Callable[[ContainerT], object],
+    discard: Callable[[ContainerT], object],
+) -> ContainerT:
     """
-    Start the container `make` builds, and remove it on exit.
+    Start the container `make` builds, and return it.
 
     Docker picks a free ephemeral host port for each published port, but it
     can't see a port that another socket holds at that moment, such as a
     client's outgoing connection on a busy CI runner. The start then fails
-    with "address already in use". Each retry builds a new container, so
-    Docker picks again; any other failure is raised at once.
+    with "address already in use". Each retry discards the container and
+    builds a new one, so Docker picks again. Any other failure discards the
+    container and is raised at once.
     """
-    for attempt in range(1, _START_ATTEMPTS + 1):
+    attempt = 1
+    while True:
         container = make()
         try:
-            _ = container.start()
-        except APIError as error:
-            container.stop()
-            if _PORT_TAKEN not in str(error) or attempt == _START_ATTEMPTS:
+            _ = start(container)
+        except BaseException as error:
+            _ = discard(container)
+            port_taken = isinstance(error, APIError) and _PORT_TAKEN in str(error)
+            if not port_taken or attempt == _START_ATTEMPTS:
                 raise
-            continue
-        try:
-            yield container
-        finally:
-            container.stop()
-        return
+            attempt += 1
+        else:
+            return container
