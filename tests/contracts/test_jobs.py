@@ -472,6 +472,7 @@ async def test_a_last_attempt_with_a_valid_lease_is_left_running(
 async def test_jobs_of_an_unknown_kind_fail(case: JobsCase) -> None:
     queued = await _record(case, OTHER_KIND)
     running = await _running(case, OTHER_KIND)
+    await case.expire_lease(running.id)
     exhausted = await _record(case, OTHER_KIND)
     await case.force(exhausted.id, JobStatus.QUEUED, OTHER_KIND.max_attempts)
 
@@ -487,11 +488,23 @@ async def test_jobs_of_an_unknown_kind_fail(case: JobsCase) -> None:
         )
 
 
-async def test_with_no_registered_kinds_every_active_job_is_unknown(
+async def test_a_running_job_of_an_unknown_kind_is_left_until_its_lease_expires(
+    case: JobsCase,
+) -> None:
+    # A valid lease means a worker that has the kind is running it.
+    job = await _running(case, OTHER_KIND)
+    before = await _state(case, job)
+
+    assert await _fail_unrunnable(case) == []
+    assert await _state(case, job) == before
+
+
+async def test_with_no_registered_kinds_every_free_job_is_unknown(
     case: JobsCase,
 ) -> None:
     queued = await _record(case)
     running = await _running(case)
+    await case.expire_lease(running.id)
 
     failed = await _fail_unrunnable(case, frozenset())
 

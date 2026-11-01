@@ -137,15 +137,14 @@ class FakeJobRunner:
     async def fail_unrunnable(
         self, kind_names: frozenset[str], limit: int
     ) -> list[FailedJob]:
-        """Fail up to `limit` exhausted or unknown-kind jobs."""
+        """Fail up to `limit` free jobs that can never run."""
         now = self.table.clock.now()
         failed: list[FailedJob] = []
         for row in list(self.table.rows.values()):
             if len(failed) >= limit:
                 break
             unknown = row.kind not in kind_names
-            active = row.status in {JobStatus.QUEUED, JobStatus.RUNNING}
-            if not active or not (unknown or (_exhausted(row) and _free(row, now))):
+            if not _free(row, now) or not (unknown or _exhausted(row)):
                 continue
             code = UNKNOWN_KIND_CODE if unknown else ATTEMPTS_EXHAUSTED_CODE
             self.table.put(

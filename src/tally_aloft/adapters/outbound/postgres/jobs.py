@@ -166,15 +166,13 @@ class PostgresJobRunner:
     async def fail_unrunnable(
         self, kind_names: frozenset[str], limit: int
     ) -> list[FailedJob]:
-        """Fail up to `limit` exhausted or unknown-kind jobs, skipping locked rows."""
+        """Fail up to `limit` free jobs that can never run, skipping locked rows."""
         unknown = JobRecord.kind.not_in(sorted(kind_names))
+        never = or_(_exhausted(), unknown)
         # Grouped by status, so each branch can use that status's partial index.
         unrunnable = or_(
-            and_(JobRecord.status == JobStatus.QUEUED, or_(_exhausted(), unknown)),
-            and_(
-                JobRecord.status == JobStatus.RUNNING,
-                or_(and_(_lease_expired(), _exhausted()), unknown),
-            ),
+            and_(JobRecord.status == JobStatus.QUEUED, never),
+            and_(JobRecord.status == JobStatus.RUNNING, _lease_expired(), never),
         )
         locked = _locked_ids(select(JobRecord.id).where(unrunnable), limit)
         statement = (

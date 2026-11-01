@@ -70,9 +70,9 @@ class JobRunner(Protocol):
         Mark `failed` up to `limit` jobs that can never run again, and return them.
 
         Those are `queued` jobs, and `running` ones whose lease has expired,
-        that have used `max_attempts` (`attempts_exhausted`), and `queued` or
-        `running` jobs whose kind isn't in `kind_names` (`unknown_kind`, which
-        wins over exhaustion).
+        that have used `max_attempts` (`attempts_exhausted`), or whose kind
+        isn't in `kind_names` (`unknown_kind`, which wins over exhaustion). A
+        valid lease means a worker that has the kind is running the job.
         """
         ...
 
