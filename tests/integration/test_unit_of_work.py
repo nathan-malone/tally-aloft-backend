@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from tally_aloft.application.shared.idempotency import (
+        IdempotencyMaintenanceUnitOfWork,
+    )
     from tally_aloft.application.shared.jobs.ports import JobRunnerUnitOfWork
     from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
     from tests.support.postgres import PostgresDatabase
@@ -27,6 +30,9 @@ if TYPE_CHECKING:
 # Pyrefly fails here if the adapter drifts from the Protocols use cases hold.
 _unit_of_work: SharedUnitOfWork = PostgresUnitOfWork(async_sessionmaker())
 _job_runner_unit_of_work: JobRunnerUnitOfWork = PostgresUnitOfWork(async_sessionmaker())
+_maintenance_unit_of_work: IdempotencyMaintenanceUnitOfWork = PostgresUnitOfWork(
+    async_sessionmaker()
+)
 
 
 @pytest.fixture
@@ -141,19 +147,22 @@ def test_the_session_exists_only_inside_async_with() -> None:
         _ = PostgresUnitOfWork(async_sessionmaker()).session
 
 
-def test_the_job_repositories_exist_only_inside_async_with() -> None:
+@pytest.mark.parametrize(
+    "repository", ["jobs", "job_runner", "idempotency", "idempotency_maintenance"]
+)
+def test_the_repositories_exist_only_inside_async_with(repository: str) -> None:
     uow = PostgresUnitOfWork(async_sessionmaker())
 
     with pytest.raises(RuntimeError):
-        _ = uow.jobs
-    with pytest.raises(RuntimeError):
-        _ = uow.job_runner
+        _ = getattr(uow, repository)
 
 
 @pytest.mark.container
-async def test_the_job_repositories_share_the_session(
+async def test_the_repositories_share_the_session(
     make_unit_of_work: Callable[[], PostgresUnitOfWork],
 ) -> None:
     async with make_unit_of_work() as uow:
         assert uow.jobs.session is uow.session
         assert uow.job_runner.session is uow.session
+        assert uow.idempotency.session is uow.session
+        assert uow.idempotency_maintenance.session is uow.session

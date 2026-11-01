@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, case, func, insert, or_, select, update
 
+from tally_aloft.adapters.outbound.postgres.statements import NO_SYNC, locked_ids
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.application.shared.jobs.kinds import (
     ATTEMPTS_EXHAUSTED_CODE,
@@ -17,16 +18,12 @@ from tally_aloft.domain.shared.ids import PilotId
 
 if TYPE_CHECKING:
     from datetime import timedelta
-    from uuid import UUID
 
-    from sqlalchemy import CTE, ColumnElement, Select
+    from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from tally_aloft.application.shared.codec import JsonValue
     from tally_aloft.application.shared.jobs.kinds import JobKind
-
-# ORM-enabled updates would otherwise look for the rows in the session.
-_NO_SYNC = {"synchronize_session": False}
 
 
 def _lease_expired() -> ColumnElement[bool]:
@@ -50,21 +47,6 @@ def _exhausted() -> ColumnElement[bool]:
 def _stale(stale_after: timedelta) -> ColumnElement[bool]:
     """Return whether a row was last dispatched over `stale_after` ago."""
     return JobRecord.last_dispatched_at < func.now() - stale_after
-
-
-def _locked_ids(candidates: Select[UUID], limit: int) -> CTE:
-    """
-    Return the IDs of up to `limit` of `candidates`, locked, skipping locked rows.
-
-    `MATERIALIZED` makes Postgres run the locking select once, so the update
-    joined to it can't touch more than `limit` rows.
-    """
-    return (
-        candidates.limit(limit)
-        .with_for_update(skip_locked=True)
-        .cte("locked")
-        .prefix_with("MATERIALIZED")
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +110,7 @@ class PostgresJobRunner:
                 JobRecord.attempts,
                 JobRecord.payload,
             )
-            .execution_options(**_NO_SYNC)
+            .execution_options(**NO_SYNC)
         )
         row = (await self.session.execute(statement)).one_or_none()
         if row is None:
@@ -179,7 +161,7 @@ class PostgresJobRunner:
             and_(JobRecord.status == JobStatus.QUEUED, never),
             and_(JobRecord.status == JobStatus.RUNNING, _lease_expired(), never),
         )
-        locked = _locked_ids(select(JobRecord.id).where(unrunnable), limit)
+        locked = locked_ids(select(JobRecord.id).where(unrunnable), limit)
         statement = (
             update(JobRecord)
             .where(JobRecord.id == locked.c.id)
@@ -192,7 +174,7 @@ class PostgresJobRunner:
                 updated_at=func.now(),
             )
             .returning(JobRecord.id, JobRecord.kind, JobRecord.error_code)
-            .execution_options(**_NO_SYNC)
+            .execution_options(**NO_SYNC)
         )
         rows = (await self.session.execute(statement)).all()
         return [FailedJob(JobId(row.id), row.kind, row.error_code) for row in rows]
@@ -208,13 +190,13 @@ class PostgresJobRunner:
             )
             .order_by(JobRecord.last_dispatched_at)
         )
-        locked = _locked_ids(stale, limit)
+        locked = locked_ids(stale, limit)
         statement = (
             update(JobRecord)
             .where(JobRecord.id == locked.c.id)
             .values(last_dispatched_at=func.now(), updated_at=func.now())
             .returning(JobRecord.id, JobRecord.kind)
-            .execution_options(**_NO_SYNC)
+            .execution_options(**NO_SYNC)
         )
         rows = (await self.session.execute(statement)).all()
         return [QueuedJob(JobId(row.id), row.kind) for row in rows]
@@ -232,6 +214,6 @@ class PostgresJobRunner:
             )
             .values(**values, updated_at=func.now())
             .returning(JobRecord.id)
-            .execution_options(**_NO_SYNC)
+            .execution_options(**NO_SYNC)
         )
         return (await self.session.execute(statement)).scalar_one_or_none() is not None
