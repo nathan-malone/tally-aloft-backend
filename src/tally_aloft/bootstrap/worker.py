@@ -11,7 +11,12 @@ from tally_aloft.adapters.outbound.postgres.engine import (
     POOL_TIMEOUT_SECONDS,
 )
 from tally_aloft.bootstrap.broker import build_broker
-from tally_aloft.bootstrap.container import Overrides, build_use_cases, register_tasks
+from tally_aloft.bootstrap.container import (
+    Overrides,
+    build_use_cases,
+    job_kind_names,
+    register_tasks,
+)
 from tally_aloft.bootstrap.resources import open_resources
 
 if TYPE_CHECKING:
@@ -40,12 +45,13 @@ def create_worker(
     broker = build_broker(settings)
     broker.add_middlewares(RegisteredLabelsMiddleware())
     stack = AsyncExitStack()
+    kind_names = job_kind_names(tasks)
 
     async def start(state: TaskiqState) -> None:
         resources = await stack.enter_async_context(
             open_resources(settings, broker=broker)
         )
-        state.use_cases = build_use_cases(settings, resources, Overrides())
+        state.use_cases = build_use_cases(settings, resources, Overrides(), kind_names)
 
     async def stop(_state: TaskiqState) -> None:
         await stack.aclose()
