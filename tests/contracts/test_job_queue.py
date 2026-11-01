@@ -9,10 +9,10 @@ import pytest
 from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.application.shared.jobs.kinds import JobId
-from tally_aloft.bootstrap.broker import STREAM, build_broker
+from tally_aloft.bootstrap.broker import build_broker
 from tally_aloft.bootstrap.settings import Settings
 from tests.fakes.job_queue import FakeJobQueue
-from tests.support.valkey import stream_data
+from tests.support.valkey import stream_messages
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -45,8 +45,7 @@ async def taskiq_case(valkey_url: str) -> AsyncGenerator[QueueCase]:
     client = build_client(valkey_url)
 
     async def arrived() -> list[tuple[str, str]]:
-        data = await stream_data(client, STREAM)
-        messages = [broker.formatter.loads(entry) for entry in data]
+        messages = await stream_messages(client, broker)
         return [(str(message.args[0]), message.task_name) for message in messages]
 
     yield QueueCase(TaskiqJobQueue(broker), arrived)

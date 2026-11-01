@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.codec import JsonValue
     from tally_aloft.application.shared.jobs.kinds import (
         ClaimedJob,
+        FailedJob,
         JobId,
         JobKind,
         QueuedJob,
@@ -30,9 +31,12 @@ class JobRunner(Protocol):
     Runs any pilot's jobs: the unscoped operations of the job lifecycle.
 
     Only the lifecycle and maintenance use cases reach it, through
-    `JobRunnerUnitOfWork`. Every write after the claim is fenced on the
-    `attempts` the claim set: it changes the row only while the row is
-    `running` with that value, and returns whether it did.
+    `JobRunnerUnitOfWork`. A task's writes after its claim are fenced on the
+    `attempts` the claim set: each changes the row only while the row is
+    `running` with that value, and returns whether it did. The sweeper's two
+    maintenance writes aren't fenced. They take only rows no claim holds, or
+    whose lease has expired, and lock each row they take with `SKIP LOCKED`,
+    so overlapping sweeps never take the same row.
     """
 
     async def claim(
@@ -57,6 +61,33 @@ class JobRunner(Protocol):
 
     async def fail(self, job_id: JobId, attempts: int, error_code: str) -> bool:
         """Record `error_code`; set `failed` at `max_attempts`, else `queued`."""
+        ...
+
+    async def fail_unrunnable(
+        self, kind_names: frozenset[str], stale_after: timedelta, limit: int
+    ) -> list[FailedJob]:
+        """
+        Mark `failed` up to `limit` jobs that can never run again, and return them.
+
+        Those are `queued` jobs, and `running` ones whose lease has expired,
+        that have used `max_attempts` (`attempts_exhausted`), or whose kind
+        isn't in `kind_names` and that were last dispatched over `stale_after`
+        ago (`unknown_kind`, which wins over exhaustion). A valid lease means
+        a worker that has the kind may still own the job. The threshold gives
+        a job recorded before every worker has its kind time to be run. An
+        exhausted job fails at once whatever its kind.
+        """
+        ...
+
+    async def take_stale(self, stale_after: timedelta, limit: int) -> list[QueuedJob]:
+        """
+        Take up to `limit` stalled jobs for dispatch, oldest dispatch first.
+
+        Those are jobs below `max_attempts`, last dispatched over `stale_after`
+        ago, that are `queued`, or `running` with an expired lease. Each one's
+        `last_dispatched_at` is set to now, so it is taken at most once per
+        `stale_after`; its status is left for the claim.
+        """
         ...
 
 

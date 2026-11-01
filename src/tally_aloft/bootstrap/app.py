@@ -15,7 +15,12 @@ from tally_aloft.adapters.inbound.http.errors import (
     install_exception_handlers,
 )
 from tally_aloft.adapters.inbound.http.operation_ids import operation_id
-from tally_aloft.bootstrap.container import Overrides, build_use_cases
+from tally_aloft.bootstrap.container import (
+    TASKS,
+    Overrides,
+    build_use_cases,
+    job_kind_names,
+)
 from tally_aloft.bootstrap.resources import open_resources
 
 if TYPE_CHECKING:
@@ -53,8 +58,10 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
     @asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncGenerator[None]:
         async with open_resources(settings) as resources:
+            # The API never sweeps; the kind names only keep its registry
+            # built the same way as a worker's.
             api.state.use_cases = build_use_cases(
-                settings, resources, resolved_overrides
+                settings, resources, resolved_overrides, job_kind_names(TASKS)
             )
             yield
 

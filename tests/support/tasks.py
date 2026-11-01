@@ -8,6 +8,7 @@ broker's own connection pool. This module runs inside the release image, with
 """
 
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 from typing import Annotated
 
@@ -16,6 +17,7 @@ from taskiq import Context, TaskiqDepends
 from taskiq_redis import RedisStreamBroker
 
 from tally_aloft.adapters.inbound.jobs.dependencies import UseCasesDep  # noqa: TC001  # Taskiq reads task annotations at run time.
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
 from tally_aloft.application.registry import UseCases  # noqa: TC001  # Taskiq reads task annotations at run time.
 from tests.support.jobs import TEST_JOB_TASKS
@@ -86,5 +88,14 @@ PROBE_TASKS = (
     TaskDefinition(name=USE_CASES, function=use_cases, timeout=PROBE_TIMEOUT),
 )
 
+# The production sweeper, kicked every second so a test sees several sweeps
+# quickly, with a timeout under TEST_IDLE_TIMEOUT. A message from the
+# production scheduler carries its own 50-second timeout, which wins.
+TEST_SWEEP_TASK = replace(SWEEP_TASK, timeout=PROBE_TIMEOUT, every=timedelta(seconds=1))
+
 # Every task the test worker registers.
-TEST_TASKS: tuple[TaskDefinition, ...] = (*PROBE_TASKS, *TEST_JOB_TASKS)
+TEST_TASKS: tuple[TaskDefinition, ...] = (
+    *PROBE_TASKS,
+    *TEST_JOB_TASKS,
+    TEST_SWEEP_TASK,
+)

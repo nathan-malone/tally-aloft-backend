@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
 from tally_aloft.bootstrap.broker import build_broker
 from tally_aloft.bootstrap.container import TASKS, register_tasks
@@ -30,16 +31,70 @@ async def broker() -> AsyncGenerator[RedisStreamBroker]:
     await broker.shutdown()
 
 
+@pytest.fixture
+async def roomy_broker() -> AsyncGenerator[RedisStreamBroker]:
+    """A broker whose idle_timeout, 51 seconds, has room for the sweeper's 50."""
+    broker = build_broker(Settings.for_tests(broker_idle_timeout=51))
+    yield broker
+    await broker.shutdown()
+
+
 def test_an_empty_list_registers_nothing(broker: RedisStreamBroker) -> None:
     register_tasks(broker, [])
 
     assert broker.get_all_tasks() == {}
 
 
-def test_the_production_list_registers(broker: RedisStreamBroker) -> None:
-    register_tasks(broker, TASKS)
+def test_the_production_list_registers(roomy_broker: RedisStreamBroker) -> None:
+    register_tasks(roomy_broker, TASKS)
 
-    assert set(broker.get_all_tasks()) == {task.name for task in TASKS}
+    assert set(roomy_broker.get_all_tasks()) == {task.name for task in TASKS}
+
+
+def test_the_production_list_holds_the_sweeper() -> None:
+    assert SWEEP_TASK in TASKS
+    assert SWEEP_TASK.name == "jobs.sweep"
+    assert SWEEP_TASK.timeout == timedelta(seconds=50)
+    assert SWEEP_TASK.every == timedelta(minutes=1)
+
+
+@pytest.mark.parametrize(("idle", "fits"), [(50, False), (51, True)])
+async def test_the_idle_timeout_check_counts_the_sweeper(
+    idle: int,
+    fits: bool,  # noqa: FBT001  # A parametrized case.
+) -> None:
+    broker = build_broker(Settings.for_tests(broker_idle_timeout=idle))
+    try:
+        if fits:
+            register_tasks(broker, TASKS)
+        else:
+            message = (
+                r"TALLY_BROKER_IDLE_TIMEOUT \(50s\) must be greater than the "
+                r"longest task timeout \(50s\)"
+            )
+            with pytest.raises(ValueError, match=message):
+                register_tasks(broker, TASKS)
+        registered = set(broker.get_all_tasks())
+    finally:
+        await broker.shutdown()
+
+    assert registered == ({SWEEP_TASK.name} if fits else set())
+
+
+def test_a_scheduled_task_gets_a_schedule_label_named_after_it(
+    roomy_broker: RedisStreamBroker,
+) -> None:
+    register_tasks(roomy_broker, [SWEEP_TASK])
+    labels = roomy_broker.get_all_tasks()[SWEEP_TASK.name].labels
+
+    assert labels["timeout"] == 50.0
+    assert labels["schedule"] == [{"interval": 60, "schedule_id": "jobs.sweep"}]
+
+
+def test_an_unscheduled_task_gets_no_schedule_label(broker: RedisStreamBroker) -> None:
+    register_tasks(broker, [_task("a", 2)])
+
+    assert "schedule" not in broker.get_all_tasks()["a"].labels
 
 
 def test_each_task_is_registered_under_its_name_with_its_timeout(

@@ -1,10 +1,13 @@
 from datetime import timedelta
 
 import pytest
+from taskiq.schedule_sources import LabelScheduleSource
 
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_INTERVAL
 from tally_aloft.bootstrap import worker
+from tally_aloft.bootstrap.container import TASKS
 from tally_aloft.bootstrap.settings import Settings
-from tally_aloft.bootstrap.worker import create_worker
+from tally_aloft.bootstrap.worker import create_scheduler, create_worker
 
 
 def _past_the_backstop(statement_timeout: int, most: int, backstop: int) -> str:
@@ -46,3 +49,33 @@ def test_a_raised_job_backstop_still_stops_a_statement_timeout_past_it(
 
     with pytest.raises(ValueError, match=_past_the_backstop(32, 31, 142)):
         _ = create_worker(settings, [])
+
+
+async def test_the_scheduler_reads_the_registered_schedules_without_connecting() -> (
+    None
+):
+    # The database and Valkey URLs refuse connections, so a connection fails.
+    broker = create_worker(Settings.for_tests(), TASKS)
+    scheduler = create_scheduler(broker)
+    [source] = scheduler.sources
+    assert isinstance(source, LabelScheduleSource)
+    assert source.broker is broker
+
+    try:
+        await source.startup()
+        [schedule] = await source.get_schedules()
+    finally:
+        await broker.shutdown()
+
+    assert schedule.task_name == "jobs.sweep"
+    assert schedule.schedule_id == "jobs.sweep"
+    assert schedule.interval == 60
+    assert schedule.labels == {"timeout": 50.0}
+
+
+def test_a_never_dispatched_job_is_recovered_within_six_minutes() -> None:
+    # The job is stale after the threshold, and the next sweep is at most
+    # one interval later (NFR-12, AC 3).
+    threshold = timedelta(seconds=Settings.for_tests().job_stale_after)
+
+    assert threshold + SWEEP_INTERVAL <= timedelta(minutes=6)

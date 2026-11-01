@@ -25,6 +25,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
 | `make datastores.up` | Start the local data stores in containers and wait until they're healthy |
 | `make worker.run` | Run a worker on the host, with the settings in `.env` |
+| `make scheduler.run` | Run the scheduler on the host, with the settings in `.env`; only one may run |
 | `make migrations.apply` | Upgrade the database in `.env` to the latest migration |
 | `make migrations.create NAME="add flights"` | Write a migration for the table models' changes |
 | `make packages.outdated.show` | Show which direct dependencies have newer releases |
@@ -56,13 +57,23 @@ make worker.run
 
 It runs one worker process against the same Postgres and Valkey, with the settings in `.env`, and stops on Ctrl+C after waiting up to 25 seconds for running tasks. It doesn't reload when the code changes, so restart it after an edit. No feature records jobs yet, so it waits for work.
 
+To recover stalled jobs, start the scheduler in a third terminal:
+
+```
+make scheduler.run
+```
+
+It kicks the job sweeper every minute, and once when it starts; a worker runs the sweep. It connects only to Valkey, never to the database, and stops on Ctrl+C.
+
+Only one scheduler may run against one set of data stores: each one kicks every schedule, so two double the sweeps. The host processes and the Compose stack below share the same Postgres, Valkey and broker stream, so don't run host workers or a host scheduler beside `make containers.up`. Besides the doubled sweeps, a sweep runs on whichever worker takes it, and a worker that registers different job kinds, such as a host worker beside the e2e stack's test worker, fails the other's jobs as `unknown_kind`.
+
 ## Run everything in containers
 
 ```
 make containers.up
 ```
 
-This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only, and a `worker` with the image's worker command. The worker serves no HTTP and has no health check. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
+This builds the image from the `Dockerfile`, starts Postgres and Valkey, runs the migrations in a `migrate` container once Postgres is healthy, and then, once Valkey is healthy too, starts the API on <http://127.0.0.1:8000/readyz>, bound to `127.0.0.1` only, and a `worker` with the image's worker command. One `scheduler`, with the image's scheduler command, starts as soon as Valkey is healthy, without waiting for the migrations. The worker and the scheduler serve no HTTP and have no health check. The containers' settings are in `compose.yaml`, not in `.env`. Stop them with Ctrl+C, and run `make containers.down` to remove the containers.
 
 The database lives in a Docker volume, so it survives `make containers.down`. `make containers.down ARGS=--volumes` deletes it as well, and the next start creates the roles again from `compose/postgres-init.sql`.
 
@@ -75,7 +86,7 @@ make containers.e2e.up
 make containers.e2e.job.run
 ```
 
-The first is `make containers.up` with `compose.e2e.yaml`, which runs the test worker, `tests.support.worker:broker`, built from the `Dockerfile`'s `dev` stage with `tests/` included. The second, in another terminal, records a test job against the running stack and waits up to a minute for it to succeed. `make containers.down` stops it all.
+The first is `make containers.up` with `compose.e2e.yaml`, which runs the test worker, `tests.support.worker:broker`, built from the `Dockerfile`'s `dev` stage with `tests/` included. The second, in another terminal, records a test job against the running stack, which is dispatched at once. It also inserts one in SQL as if its dispatch had been lost 10 minutes ago, which only the scheduler's sweeper recovers, within a minute. It waits up to 2 minutes for both to succeed. `make containers.down` stops it all.
 
 ## Migrations
 
@@ -133,6 +144,8 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_VALKEY_URL` | The cache's Valkey: `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, with reserved characters in the user and password percent-encoded and no query. In `staging` and `production` it must be `rediss://` and carry a password: an AUTH token (`rediss://:token@host`) or a user's. Secret. | none | yes |
 | `TALLY_BROKER_IDLE_TIMEOUT` | Seconds a worker's task message may go unacknowledged before another worker may reclaim it, at least 1. It must be greater than every task's timeout, or the worker fails at import, naming both values. | `900` | no |
 | `TALLY_BROKER_STREAM_MAXLEN` | The approximate number of messages the broker's stream is trimmed to, at least 1. A trimmed message's job is recovered from its row. | `100000` | no |
+| `TALLY_JOB_STALE_AFTER` | Seconds after a job's last dispatch that the sweeper dispatches it again, at least 1: a `queued` job no worker took, or a `running` one whose lease has expired. A failed attempt's retry waits for it too. | `300` | no |
+| `TALLY_SWEEP_BATCH_SIZE` | The most jobs each step of the sweeper handles in one run, at least 1. | `500` | no |
 | `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in `TALLY_DATABASE_URL`'s format and with its `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 

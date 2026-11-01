@@ -2,7 +2,8 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from taskiq import TaskiqEvents
+from taskiq import TaskiqEvents, TaskiqScheduler
+from taskiq.schedule_sources import LabelScheduleSource
 
 from tally_aloft.adapters.inbound.jobs.labels import RegisteredLabelsMiddleware
 from tally_aloft.adapters.inbound.jobs.tasks import JOB_BACKSTOP, JOB_BACKSTOP_SLACK
@@ -11,7 +12,12 @@ from tally_aloft.adapters.outbound.postgres.engine import (
     POOL_TIMEOUT_SECONDS,
 )
 from tally_aloft.bootstrap.broker import build_broker
-from tally_aloft.bootstrap.container import Overrides, build_use_cases, register_tasks
+from tally_aloft.bootstrap.container import (
+    Overrides,
+    build_use_cases,
+    job_kind_names,
+    register_tasks,
+)
 from tally_aloft.bootstrap.resources import open_resources
 
 if TYPE_CHECKING:
@@ -40,12 +46,13 @@ def create_worker(
     broker = build_broker(settings)
     broker.add_middlewares(RegisteredLabelsMiddleware())
     stack = AsyncExitStack()
+    kind_names = job_kind_names(tasks)
 
     async def start(state: TaskiqState) -> None:
         resources = await stack.enter_async_context(
             open_resources(settings, broker=broker)
         )
-        state.use_cases = build_use_cases(settings, resources, Overrides())
+        state.use_cases = build_use_cases(settings, resources, Overrides(), kind_names)
 
     async def stop(_state: TaskiqState) -> None:
         await stack.aclose()
@@ -54,6 +61,17 @@ def create_worker(
     broker.add_event_handler(TaskiqEvents.WORKER_SHUTDOWN, stop)
     register_tasks(broker, tasks)
     return broker
+
+
+def create_scheduler(broker: RedisStreamBroker) -> TaskiqScheduler:
+    """
+    Return the scheduler, which kicks each registered task's schedule.
+
+    It reads the schedules from the tasks `create_worker` registered. Its
+    process starts the broker, which creates the consumer group, but runs no
+    worker startup handler, so it never opens the database.
+    """
+    return TaskiqScheduler(broker, [LabelScheduleSource(broker)])
 
 
 def _check_statement_timeout(settings: Settings) -> None:

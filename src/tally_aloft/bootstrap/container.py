@@ -5,15 +5,18 @@ from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
+from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
+from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.application.registry import UseCases
 from tally_aloft.application.shared.check_readiness import CheckReadiness
 from tally_aloft.application.shared.jobs.claim_job import ClaimJob
 from tally_aloft.application.shared.jobs.complete_job import CompleteJob
 from tally_aloft.application.shared.jobs.fail_job_attempt import FailJobAttempt
 from tally_aloft.application.shared.jobs.renew_job_lease import RenewJobLease
+from tally_aloft.application.shared.jobs.sweep_jobs import SweepJobs
 from tally_aloft.bootstrap.broker import idle_timeout
 
 if TYPE_CHECKING:
@@ -28,9 +31,9 @@ if TYPE_CHECKING:
     from tally_aloft.bootstrap.settings import Settings
     from tally_aloft.domain.shared.errors import CodedError
 
-# Every task the production worker runs. Job kinds and scheduled tasks join
-# it as features and maintenance jobs are built.
-TASKS: tuple[TaskDefinition, ...] = ()
+# Every task the production worker runs, and the scheduler schedules. Job
+# kinds and scheduled tasks join it as features and maintenance jobs are built.
+TASKS: tuple[TaskDefinition, ...] = (SWEEP_TASK,)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -49,11 +52,18 @@ class Overrides:
 
 
 def build_use_cases(
-    settings: Settings,  # noqa: ARG001  # Later stories build adapters from settings.
+    settings: Settings,
     resources: Resources,
     overrides: Overrides,
+    kind_names: frozenset[str],
 ) -> UseCases:
-    """Build every adapter, on the opened `resources`, and the `UseCases` registry."""
+    """
+    Build every adapter, on the opened `resources`, and the `UseCases` registry.
+
+    `kind_names` are the job kinds this process's workers register, which the
+    sweeper keeps; it fails jobs of any other kind. The API builds the same
+    registry but never sweeps, so its kind names go unused.
+    """
     checks = (
         _dependency_checks(resources)
         if overrides.dependency_checks is None
@@ -66,7 +76,19 @@ def build_use_cases(
         renew_job_lease=RenewJobLease(uow),
         complete_job=CompleteJob(uow),
         fail_job_attempt=FailJobAttempt(uow),
+        sweep_jobs=SweepJobs(
+            uow=uow,
+            queue=TaskiqJobQueue(resources.broker),
+            kind_names=kind_names,
+            stale_after=timedelta(seconds=settings.job_stale_after),
+            batch_size=settings.sweep_batch_size,
+        ),
     )
+
+
+def job_kind_names(tasks: Sequence[TaskDefinition]) -> frozenset[str]:
+    """Return the name of every job kind that a task in `tasks` runs."""
+    return frozenset(task.kind_name for task in tasks if task.kind_name is not None)
 
 
 def _dependency_checks(resources: Resources) -> tuple[DependencyCheck, ...]:
@@ -83,7 +105,9 @@ def register_tasks(broker: RedisStreamBroker, tasks: Sequence[TaskDefinition]) -
     """
     Register `tasks` on `broker`, each under its name with its timeout.
 
-    It raises `ValueError`, registering nothing, when two tasks share a name,
+    A scheduled task's `every` becomes Taskiq's `schedule` label, which the
+    scheduler reads, with the task's name as the schedule's ID. It raises
+    `ValueError`, registering nothing, when two tasks share a name,
     which Taskiq would silently resolve to the last, or when the broker's idle
     timeout isn't greater than the longest task timeout: another worker could
     then reclaim a message whose task is still running.
@@ -104,8 +128,19 @@ def register_tasks(broker: RedisStreamBroker, tasks: Sequence[TaskDefinition]) -
         raise ValueError(msg)
     for task in tasks:
         _ = broker.register_task(
-            task.function, task_name=task.name, timeout=task.timeout.total_seconds()
+            task.function,
+            task_name=task.name,
+            timeout=task.timeout.total_seconds(),
+            **_schedule_label(task),
         )
+
+
+def _schedule_label(task: TaskDefinition) -> dict[str, object]:
+    """Return the `schedule` label for a scheduled task, or no labels."""
+    if task.every is None:
+        return {}
+    interval = int(task.every.total_seconds())
+    return {"schedule": [{"interval": interval, "schedule_id": task.name}]}
 
 
 def _seconds(duration: timedelta) -> str:

@@ -121,16 +121,71 @@ def start_worker(
     """
 
     def start(command: list[str], environment: dict[str, str]) -> Container:
-        container = docker_client.containers.run(
+        container = _run_with_tests(
+            docker_client,
             api_image,
-            command,
-            detach=True,
-            name=unique_name("worker"),
+            tests_mount,
+            purpose="worker",
+            command=command,
             environment=environment,
-            mounts=[tests_mount],
-            extra_hosts=HOST_GATEWAY,
         )
         started_containers.append(container)
         return container
 
     return start
+
+
+@pytest.fixture
+def start_scheduler(
+    docker_client: docker.DockerClient,
+    api_image: Image,
+    tests_mount: Mount,
+    valkey_url: str,  # noqa: ARG001  # Set up first, so it is flushed after the container goes.
+    started_containers: list[Container],
+) -> Callable[[list[str], dict[str, str]], Container]:
+    """
+    Start a scheduler container, as `start_worker` does, under an init process.
+
+    Compose runs the scheduler with `init: true`, because Taskiq's scheduler
+    has no `SIGTERM` handler, which PID 1 needs to stop on one. The container
+    is removed before this run's Valkey is flushed, so a kick it sends late
+    can't reach the next test.
+    """
+
+    def start(command: list[str], environment: dict[str, str]) -> Container:
+        container = _run_with_tests(
+            docker_client,
+            api_image,
+            tests_mount,
+            purpose="scheduler",
+            command=command,
+            environment=environment,
+            init=True,
+        )
+        started_containers.append(container)
+        return container
+
+    return start
+
+
+def _run_with_tests(  # noqa: PLR0913  # The container's settings, one by one.
+    docker_client: docker.DockerClient,
+    image: Image,
+    tests_mount: Mount,
+    *,
+    purpose: str,
+    command: list[str],
+    environment: dict[str, str],
+    init: bool = False,
+) -> Container:
+    """Run `command` from `image`, detached, with `tests/` mounted."""
+    return docker_client.containers.run(
+        image,
+        command,
+        detach=True,
+        name=unique_name(purpose),
+        environment=environment,
+        mounts=[tests_mount],
+        extra_hosts=HOST_GATEWAY,
+        init=init,
+    )

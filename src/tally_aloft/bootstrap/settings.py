@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     # job is recovered from its row.
     broker_stream_maxlen: Annotated[int, Field(ge=1)] = 100000
 
+    # How long after its last dispatch the sweeper dispatches a job again: a
+    # `queued` job that no worker took, or a `running` one whose lease expired.
+    # Retries wait for it too.
+    job_stale_after: Annotated[int, Field(ge=1)] = 300
+    # The most rows each of the sweeper's steps handles in one run.
+    sweep_batch_size: Annotated[int, Field(ge=1)] = 500
+
     @field_validator("database_url")
     @classmethod
     def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:

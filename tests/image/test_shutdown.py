@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from tests.support.containers import unique_name, wait_for_log
+from tests.support.containers import start_retrying, unique_name, wait_for_log
 from tests.support.server import REQUIRED_SETTINGS
 
 if TYPE_CHECKING:
@@ -35,14 +35,16 @@ def start_api(
     started_containers: list[Container],
 ) -> Callable[[list[str]], Container]:
     def start(command: list[str]) -> Container:
-        container = docker_client.containers.run(
-            api_image,
-            command,
-            detach=True,
-            name=unique_name("api"),
-            environment=REQUIRED_SETTINGS,
-            mounts=[tests_mount],
-            ports={"8000/tcp": ("127.0.0.1", 0)},  # Port 0: Docker picks a free one.
+        container = start_retrying(
+            lambda: docker_client.containers.create(
+                api_image,
+                command,
+                name=unique_name("api"),
+                environment=REQUIRED_SETTINGS,
+                mounts=[tests_mount],
+                # Port 0: Docker picks a free one.
+                ports={"8000/tcp": ("127.0.0.1", 0)},
+            )
         )
         started_containers.append(container)
         wait_for_log(container, "Application startup complete")

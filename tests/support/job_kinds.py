@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from tally_aloft.application.shared.jobs.kinds import JobKind
+from tally_aloft.bootstrap.container import job_kind_names
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -23,5 +24,4 @@ def kinds_without_a_task(
     names: Iterable[str], tasks: Sequence[TaskDefinition]
 ) -> list[str]:
     """Return, sorted, each kind name that no job task in `tasks` runs."""
-    covered = {task.kind_name for task in tasks if task.kind_name is not None}
-    return sorted(set(names) - covered)
+    return sorted(set(names) - job_kind_names(tasks))

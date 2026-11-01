@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 # taskiq-redis names its reclaim lock itself: `autoclaim:<group>:<stream>`.
 STREAM = "broker:tasks"
 CONSUMER_GROUP = "broker:workers"
-# Only workers create the group. Starting it at the stream's first message,
-# not at `$`, delivers messages the API added before any worker started.
+# Workers and the scheduler create the group as their broker starts; the API
+# never does. Starting it at the stream's first message, not at `$`, delivers
+# messages the API added before the group existed.
 _GROUP_START = "0"
 # How long a read waits for new messages. It must stay below the connection's
 # 5-second socket timeout, or every idle read would time out.

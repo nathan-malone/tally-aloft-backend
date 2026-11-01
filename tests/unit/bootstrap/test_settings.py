@@ -301,10 +301,47 @@ def test_reads_the_broker_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.broker_stream_maxlen == 1000
 
 
+def test_sweep_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
+    settings = Settings()
+
+    assert settings.job_stale_after == 300
+    assert settings.sweep_batch_size == 500
+
+
+def test_reads_the_sweep_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_JOB_STALE_AFTER", "1")
+    monkeypatch.setenv("TALLY_SWEEP_BATCH_SIZE", "1")
+
+    settings = Settings()
+
+    assert settings.job_stale_after == 1
+    assert settings.sweep_batch_size == 1
+
+
+@pytest.mark.parametrize(
+    "variable", ["TALLY_JOB_STALE_AFTER", "TALLY_SWEEP_BATCH_SIZE"]
+)
+def test_names_a_sweep_setting_that_isnt_a_number(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv(variable, "five")
+
+    with pytest.raises(SystemExit) as error:
+        _ = load_settings()
+
+    assert _exit_message(error) == f"Invalid settings: {variable} (int_parsing)"
+
+
 @pytest.mark.parametrize(
     ("variable", "value"),
     [
         ("TALLY_BROKER_IDLE_TIMEOUT", "0"),
+        ("TALLY_JOB_STALE_AFTER", "0"),
+        ("TALLY_SWEEP_BATCH_SIZE", "0"),
         ("TALLY_BROKER_STREAM_MAXLEN", "0"),
         ("TALLY_DATABASE_POOL_SIZE", "0"),
         ("TALLY_DATABASE_MAX_OVERFLOW", "-1"),

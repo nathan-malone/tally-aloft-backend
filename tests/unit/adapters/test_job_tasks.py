@@ -128,3 +128,23 @@ def test_an_unknown_task_keeps_its_labels(
 def test_get_use_cases_fails_before_the_worker_starts() -> None:
     with pytest.raises(RuntimeError, match="startup hasn't run"):
         get_use_cases(TaskiqState())
+
+
+@pytest.mark.parametrize("seconds", [0, 0.5, 1.5, -60])
+def test_a_schedule_must_be_whole_seconds_of_at_least_one(seconds: float) -> None:
+    with pytest.raises(ValueError, match="task bad needs `every` of whole seconds"):
+        _ = TaskDefinition(
+            name="bad",
+            function=_noop,
+            timeout=timedelta(seconds=1),
+            every=timedelta(seconds=seconds),
+        )
+
+
+@pytest.mark.parametrize("every", [None, timedelta(seconds=1), timedelta(hours=1)])
+def test_a_task_takes_no_schedule_or_whole_seconds(every: timedelta | None) -> None:
+    definition = TaskDefinition(
+        name="ok", function=_noop, timeout=timedelta(seconds=1), every=every
+    )
+
+    assert definition.every == every

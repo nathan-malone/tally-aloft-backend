@@ -10,8 +10,10 @@ from tests.support.paths import ROOT
 from tests.support.postgres import POSTGRES_IMAGE
 from tests.support.valkey import VALKEY_IMAGE
 from tests.support.worker_command import (
+    SCHEDULER_MODULE,
     TEST_WORKER_MODULE,
     WORKER_MODULE,
+    scheduler_command,
     worker_command,
 )
 
@@ -56,6 +58,11 @@ def worker_service(services: dict[str, Service]) -> Service:
 @pytest.fixture(scope="module")
 def api_service(services: dict[str, Service]) -> Service:
     return services["api"]
+
+
+@pytest.fixture(scope="module")
+def scheduler_service(services: dict[str, Service]) -> Service:
+    return services["scheduler"]
 
 
 def _ports(service: Service) -> list[tuple[object, object, object]]:
@@ -238,3 +245,66 @@ def test_the_e2e_override_runs_the_test_worker_from_the_dev_stage() -> None:
 
     assert build["target"] == "dev"
     assert worker["command"] == worker_command(TEST_WORKER_MODULE)
+
+
+def test_the_scheduler_runs_only_in_the_app_profile(
+    scheduler_service: Service,
+) -> None:
+    assert scheduler_service["profiles"] == ["app"]
+
+
+def test_the_scheduler_runs_the_image_contracts_command(
+    scheduler_service: Service,
+) -> None:
+    assert scheduler_service["command"] == scheduler_command(SCHEDULER_MODULE)
+
+
+def test_the_scheduler_runs_under_an_init_process(scheduler_service: Service) -> None:
+    assert scheduler_service["init"] is True
+
+
+def test_the_scheduler_runs_one_instance(scheduler_service: Service) -> None:
+    assert "deploy" not in scheduler_service
+    assert "scale" not in scheduler_service
+
+
+def test_the_scheduler_serves_no_port_and_has_no_health_check(
+    scheduler_service: Service,
+) -> None:
+    assert "ports" not in scheduler_service
+    assert "healthcheck" not in scheduler_service
+
+
+def test_the_scheduler_sets_every_required_setting_and_no_owner_role(
+    scheduler_service: Service,
+) -> None:
+    variables = _environment(scheduler_service).keys()
+
+    assert _required_variables(Settings) <= variables
+    assert [v for v in variables if v.startswith("TALLY_MIGRATION_")] == []
+
+
+def test_the_scheduler_starts_once_valkey_is_healthy(
+    scheduler_service: Service,
+) -> None:
+    assert _depends_on(scheduler_service) == {"valkey": "service_healthy"}
+
+
+def test_the_e2e_override_leaves_the_scheduler_alone(
+    scheduler_service: Service,
+) -> None:
+    scheduler = _rendered("compose.yaml", "compose.e2e.yaml")["scheduler"]
+
+    assert scheduler == scheduler_service
+
+
+@pytest.mark.parametrize(
+    "files", [("compose.yaml",), ("compose.yaml", "compose.e2e.yaml")]
+)
+@pytest.mark.parametrize("service", ["worker", "scheduler"])
+def test_the_jobs_keep_the_default_sweep_settings(
+    files: tuple[str, ...], service: str
+) -> None:
+    variables = _environment(_rendered(*files)[service]).keys()
+
+    assert {"TALLY_JOB_STALE_AFTER", "TALLY_SWEEP_BATCH_SIZE"}.isdisjoint(variables)
