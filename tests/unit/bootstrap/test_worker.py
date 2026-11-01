@@ -63,14 +63,19 @@ async def test_the_scheduler_reads_the_registered_schedules_without_connecting()
 
     try:
         await source.startup()
-        [schedule] = await source.get_schedules()
+        schedules = await source.get_schedules()
     finally:
         await broker.shutdown()
 
-    assert schedule.task_name == "jobs.sweep"
-    assert schedule.schedule_id == "jobs.sweep"
-    assert schedule.interval == 60
-    assert schedule.labels == {"timeout": 50.0}
+    found = {
+        (s.task_name, s.schedule_id, s.interval, float(s.labels["timeout"]))
+        for s in schedules
+    }
+    assert found == {
+        ("jobs.sweep", "jobs.sweep", 60, 50.0),
+        ("idempotency.cleanup", "idempotency.cleanup", 3600, 300.0),
+    }
+    assert all(set(s.labels) == {"timeout"} for s in schedules)
 
 
 def test_a_never_dispatched_job_is_recovered_within_six_minutes() -> None:

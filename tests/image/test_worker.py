@@ -179,7 +179,7 @@ def test_the_image_imports_the_worker_with_only_the_sweeper(
 
     assert result["StatusCode"] == 0, container.logs().decode()
     output = container.logs(stdout=True, stderr=False).decode().strip()
-    assert output == "jobs.sweep TaskiqScheduler"
+    assert output == "idempotency.cleanup jobs.sweep TaskiqScheduler"
 
 
 async def test_a_killed_workers_message_is_redelivered(

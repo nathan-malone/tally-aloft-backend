@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tally_aloft.adapters.inbound.jobs.idempotency_cleanup import CLEANUP_TASK
 from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
 from tally_aloft.bootstrap.broker import build_broker
@@ -33,8 +34,8 @@ async def broker() -> AsyncGenerator[RedisStreamBroker]:
 
 @pytest.fixture
 async def roomy_broker() -> AsyncGenerator[RedisStreamBroker]:
-    """A broker whose idle_timeout, 51 seconds, has room for the sweeper's 50."""
-    broker = build_broker(Settings.for_tests(broker_idle_timeout=51))
+    """A broker whose idle_timeout, 301 seconds, has room for the cleanup's 300."""
+    broker = build_broker(Settings.for_tests(broker_idle_timeout=301))
     yield broker
     await broker.shutdown()
 
@@ -58,8 +59,15 @@ def test_the_production_list_holds_the_sweeper() -> None:
     assert SWEEP_TASK.every == timedelta(minutes=1)
 
 
-@pytest.mark.parametrize(("idle", "fits"), [(50, False), (51, True)])
-async def test_the_idle_timeout_check_counts_the_sweeper(
+def test_the_production_list_holds_the_idempotency_cleanup() -> None:
+    assert CLEANUP_TASK in TASKS
+    assert CLEANUP_TASK.name == "idempotency.cleanup"
+    assert CLEANUP_TASK.timeout == timedelta(seconds=300)
+    assert CLEANUP_TASK.every == timedelta(hours=1)
+
+
+@pytest.mark.parametrize(("idle", "fits"), [(300, False), (301, True)])
+async def test_the_idle_timeout_check_counts_the_longest_task(
     idle: int,
     fits: bool,  # noqa: FBT001  # A parametrized case.
 ) -> None:
@@ -69,8 +77,8 @@ async def test_the_idle_timeout_check_counts_the_sweeper(
             register_tasks(broker, TASKS)
         else:
             message = (
-                r"TALLY_BROKER_IDLE_TIMEOUT \(50s\) must be greater than the "
-                r"longest task timeout \(50s\)"
+                r"TALLY_BROKER_IDLE_TIMEOUT \(300s\) must be greater than the "
+                r"longest task timeout \(300s\)"
             )
             with pytest.raises(ValueError, match=message):
                 register_tasks(broker, TASKS)
@@ -78,7 +86,7 @@ async def test_the_idle_timeout_check_counts_the_sweeper(
     finally:
         await broker.shutdown()
 
-    assert registered == ({SWEEP_TASK.name} if fits else set())
+    assert registered == ({SWEEP_TASK.name, CLEANUP_TASK.name} if fits else set())
 
 
 def test_a_scheduled_task_gets_a_schedule_label_named_after_it(
@@ -89,6 +97,16 @@ def test_a_scheduled_task_gets_a_schedule_label_named_after_it(
 
     assert labels["timeout"] == 50.0
     assert labels["schedule"] == [{"interval": 60, "schedule_id": "jobs.sweep"}]
+
+
+def test_the_cleanup_is_scheduled_hourly(roomy_broker: RedisStreamBroker) -> None:
+    register_tasks(roomy_broker, [CLEANUP_TASK])
+    labels = roomy_broker.get_all_tasks()[CLEANUP_TASK.name].labels
+
+    assert labels["timeout"] == 300.0
+    assert labels["schedule"] == [
+        {"interval": 3600, "schedule_id": "idempotency.cleanup"}
+    ]
 
 
 def test_an_unscheduled_task_gets_no_schedule_label(broker: RedisStreamBroker) -> None:

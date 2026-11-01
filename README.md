@@ -63,7 +63,7 @@ To recover stalled jobs, start the scheduler in a third terminal:
 make scheduler.run
 ```
 
-It kicks the job sweeper every minute, and once when it starts; a worker runs the sweep. It connects only to Valkey, never to the database, and stops on Ctrl+C.
+It kicks the job sweeper every minute and the idempotency cleanup every hour, and each once when it starts; a worker runs them. It connects only to Valkey, never to the database, and stops on Ctrl+C.
 
 Only one scheduler may run against one set of data stores: each one kicks every schedule, so two double the sweeps. The host processes and the Compose stack below share the same Postgres, Valkey and broker stream, so don't run host workers or a host scheduler beside `make containers.up`. Besides the doubled sweeps, a sweep runs on whichever worker takes it, and a worker that registers different job kinds, such as a host worker beside the e2e stack's test worker, fails the other's jobs as `unknown_kind`.
 
@@ -142,7 +142,7 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |
 | `TALLY_DATABASE_STATEMENT_TIMEOUT` | Seconds a statement may run before Postgres cancels it, at least 1. | `30` | no |
 | `TALLY_VALKEY_URL` | The cache's Valkey: `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, with reserved characters in the user and password percent-encoded and no query. In `staging` and `production` it must be `rediss://` and carry a password: an AUTH token (`rediss://:token@host`) or a user's. Secret. | none | yes |
-| `TALLY_BROKER_IDLE_TIMEOUT` | Seconds a worker's task message may go unacknowledged before another worker may reclaim it, at least 1. It must be greater than every task's timeout, or the worker fails at import, naming both values. | `900` | no |
+| `TALLY_BROKER_IDLE_TIMEOUT` | Seconds a worker's task message may go unacknowledged before another worker may reclaim it, at least 1. It must be greater than every task's timeout, or the worker fails at import, naming both values; the longest is the idempotency cleanup's 300 seconds. | `900` | no |
 | `TALLY_BROKER_STREAM_MAXLEN` | The approximate number of messages the broker's stream is trimmed to, at least 1. A trimmed message's job is recovered from its row. | `100000` | no |
 | `TALLY_JOB_STALE_AFTER` | Seconds after a job's last dispatch that the sweeper dispatches it again, at least 1: a `queued` job no worker took, or a `running` one whose lease has expired. A failed attempt's retry waits for it too. | `300` | no |
 | `TALLY_SWEEP_BATCH_SIZE` | The most jobs each step of the sweeper handles in one run, at least 1. | `500` | no |
