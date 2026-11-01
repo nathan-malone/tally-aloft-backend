@@ -8,3 +8,9 @@ class ApplicationError(CodedError, abstract=True):
     Examples are authentication, entitlements, idempotency-key reuse, rate
     limits and unsupported clients.
     """
+
+
+class IdempotencyKeyReusedError(ApplicationError):
+    """A repeat of an `Idempotency-Key` that asks for a different request."""
+
+    code = "idempotency_key_reused"

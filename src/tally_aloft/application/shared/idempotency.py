@@ -10,12 +10,14 @@ status and body.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from tally_aloft.application.shared.errors import IdempotencyKeyReusedError
 from tally_aloft.application.shared.unit_of_work import SharedUnitOfWork
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from datetime import datetime
 
-    from tally_aloft.application.shared.codec import JsonValue
+    from tally_aloft.application.shared.codec import Codec, JsonValue
     from tally_aloft.domain.shared.ids import PilotId
 
 
@@ -106,3 +108,42 @@ class IdempotencyMaintenanceUnitOfWork(SharedUnitOfWork, Protocol):
     def idempotency_maintenance(self) -> IdempotencyMaintenance:
         """Return the idempotency maintenance repository on this session."""
         ...
+
+
+async def run_once[T](
+    uow: SharedUnitOfWork,
+    request: IdempotencyRequest,
+    action: Callable[[], Awaitable[T]],
+    codec: Codec[T],
+) -> T:
+    """
+    Run `action` once per key, and return its result, decoded by `codec`.
+
+    Call it first inside the use case's unit of work. `action` holds every
+    write, and every read, check or lock whose outcome changes once the first
+    call commits, so a repeat returns the stored result without them. Never
+    catch what it raises inside the unit of work: the rollback takes the key
+    row with it, so a retry runs fresh.
+
+    The first call stores the encoded result before the commit and returns it
+    decoded, as every repeat does, so all of them return equal results. A
+    repeat with a different `request_hash` raises `IdempotencyKeyReusedError`.
+    """
+    if await uow.idempotency.reserve(request):
+        encoded = codec.encode(await action())
+        await uow.idempotency.store_result(request, encoded)
+        return codec.decode(encoded)
+    stored = await uow.idempotency.find(request)
+    if stored is None:
+        # Deleted between the two statements: only the cleanup deletes, and
+        # only keys past their 24 hours, so the client's next retry runs fresh.
+        msg = "the idempotency key was deleted while it was being read"
+        raise RuntimeError(msg)
+    if stored.request_hash != request.request_hash:
+        msg = "This Idempotency-Key was already used for a different request."
+        raise IdempotencyKeyReusedError(msg)
+    if not stored.has_result:
+        # Only a use case that caught run_once's error and committed leaves this.
+        msg = "the idempotency key was committed without a result"
+        raise RuntimeError(msg)
+    return codec.decode(stored.result)
