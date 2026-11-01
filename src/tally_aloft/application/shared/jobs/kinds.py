@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 # error. They are stored on the job row, beside the bodies' own codes.
 TIMEOUT_CODE = "timeout"
 UNHANDLED_ERROR_CODE = "unhandled_error"
+# The codes the sweeper records when it fails a job that can't run again:
+# one that has used `max_attempts`, or one whose kind no worker registers.
+ATTEMPTS_EXHAUSTED_CODE = "attempts_exhausted"
+UNKNOWN_KIND_CODE = "unknown_kind"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,15 @@ class QueuedJob:
 
     id: JobId
     kind_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class FailedJob:
+    """A job the sweeper marked `failed`, with the code it recorded."""
+
+    id: JobId
+    kind_name: str
+    error_code: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

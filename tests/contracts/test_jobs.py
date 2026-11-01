@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tally_aloft.adapters.outbound.postgres.tables.jobs import JobRecord
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.application.shared.jobs.kinds import (
+    ATTEMPTS_EXHAUSTED_CODE,
+    UNKNOWN_KIND_CODE,
+    FailedJob,
     JobId,
     JobKind,
     JobStatus,
@@ -39,6 +42,10 @@ KIND = JobKind(
     max_attempts=2,
     lease=timedelta(minutes=1),
 )
+# A kind the sweep tests leave out of the registered kinds.
+OTHER_KIND = JobKind(name="test.contract_other", payload_codec=JSON, result_codec=JSON)
+REGISTERED = frozenset({KIND.name})
+STALE_AFTER = timedelta(minutes=5)
 PAYLOAD: JsonValue = {"flight": 7, "note": None}
 
 
@@ -64,6 +71,8 @@ class JobsCase:
     expire_lease: Callable[[JobId], Awaitable[None]]
     # Sets a row's status and attempts directly, for states a test can't reach.
     force: Callable[[JobId, str, int], Awaitable[None]]
+    # Sets a row's last dispatch this long before the store's `now()`.
+    age: Callable[[JobId, timedelta], Awaitable[None]]
 
 
 @pytest.fixture
@@ -94,7 +103,12 @@ def fake_case() -> JobsCase:
         row = database.jobs[job_id]
         database.jobs[job_id] = replace(row, status=status, attempts=attempts)
 
-    return JobsCase(fake_unit_of_work_factory(database), read, expire_lease, force)
+    async def age(job_id: JobId, dispatched_ago: timedelta) -> None:
+        row = database.jobs[job_id]
+        dispatched = clock.now() - dispatched_ago
+        database.jobs[job_id] = replace(row, last_dispatched_at=dispatched)
+
+    return JobsCase(fake_unit_of_work_factory(database), read, expire_lease, force, age)
 
 
 @pytest.fixture
@@ -138,7 +152,15 @@ async def postgres_case(database: PostgresDatabase) -> AsyncGenerator[JobsCase]:
             attempts=attempts,
         )
 
-    yield JobsCase(unit_of_work_factory(engine), read, expire_lease, force)
+    async def age(job_id: JobId, dispatched_ago: timedelta) -> None:
+        await update(
+            "UPDATE jobs SET last_dispatched_at = now() - CAST(:ago AS interval) "
+            "WHERE id = :id",
+            id=job_id.value,
+            ago=dispatched_ago,
+        )
+
+    yield JobsCase(unit_of_work_factory(engine), read, expire_lease, force, age)
     await engine.dispose()
 
 
@@ -383,3 +405,179 @@ async def test_success_after_a_failed_attempt_clears_its_code(case: JobsCase) ->
 
     state = await _state(case, job)
     assert (state.status, state.error_code) == (JobStatus.SUCCEEDED, None)
+
+
+async def _fail_unrunnable(
+    case: JobsCase, kind_names: frozenset[str] = REGISTERED, limit: int = 100
+) -> list[FailedJob]:
+    async with case.uow() as uow:
+        return await uow.job_runner.fail_unrunnable(kind_names, limit)
+
+
+async def _take_stale(case: JobsCase, limit: int = 100) -> list[QueuedJob]:
+    async with case.uow() as uow:
+        return await uow.job_runner.take_stale(STALE_AFTER, limit)
+
+
+async def _running(
+    case: JobsCase, kind: JobKind[JsonValue, JsonValue] = KIND
+) -> QueuedJob:
+    """Record a job and claim it, so it is `running` with a valid lease."""
+    job = await _record(case, kind)
+    async with case.uow() as uow:
+        assert await uow.job_runner.claim(job.id, kind.name, KIND.lease) is not None
+    return job
+
+
+async def _outcome(case: JobsCase, job: QueuedJob) -> tuple[str, str | None, bool]:
+    state = await _state(case, job)
+    return (state.status, state.error_code, state.leased)
+
+
+def _by_id(jobs: list[FailedJob]) -> list[FailedJob]:
+    return sorted(jobs, key=lambda job: job.id.value)
+
+
+async def test_exhausted_queued_and_expired_running_jobs_fail(case: JobsCase) -> None:
+    queued = await _record(case)
+    await case.force(queued.id, JobStatus.QUEUED, KIND.max_attempts)
+    running = await _running(case)
+    await case.force(running.id, JobStatus.RUNNING, KIND.max_attempts)
+    await case.expire_lease(running.id)
+
+    failed = await _fail_unrunnable(case)
+
+    assert _by_id(failed) == _by_id(
+        [
+            FailedJob(queued.id, KIND.name, ATTEMPTS_EXHAUSTED_CODE),
+            FailedJob(running.id, KIND.name, ATTEMPTS_EXHAUSTED_CODE),
+        ]
+    )
+    expected = (JobStatus.FAILED, ATTEMPTS_EXHAUSTED_CODE, False)
+    assert await _outcome(case, queued) == expected
+    assert await _outcome(case, running) == expected
+
+
+async def test_a_last_attempt_with_a_valid_lease_is_left_running(
+    case: JobsCase,
+) -> None:
+    job = await _running(case)
+    await case.force(job.id, JobStatus.RUNNING, KIND.max_attempts)
+    before = await _state(case, job)
+
+    assert await _fail_unrunnable(case) == []
+    assert await _state(case, job) == before
+
+
+async def test_jobs_of_an_unknown_kind_fail(case: JobsCase) -> None:
+    queued = await _record(case, OTHER_KIND)
+    running = await _running(case, OTHER_KIND)
+    exhausted = await _record(case, OTHER_KIND)
+    await case.force(exhausted.id, JobStatus.QUEUED, OTHER_KIND.max_attempts)
+
+    failed = await _fail_unrunnable(case)
+
+    assert {job.id for job in failed} == {queued.id, running.id, exhausted.id}
+    assert {job.error_code for job in failed} == {UNKNOWN_KIND_CODE}
+    for job in (queued, running, exhausted):
+        assert await _outcome(case, job) == (
+            JobStatus.FAILED,
+            UNKNOWN_KIND_CODE,
+            False,
+        )
+
+
+async def test_with_no_registered_kinds_every_active_job_is_unknown(
+    case: JobsCase,
+) -> None:
+    queued = await _record(case)
+    running = await _running(case)
+
+    failed = await _fail_unrunnable(case, frozenset())
+
+    assert {job.id for job in failed} == {queued.id, running.id}
+    assert {job.error_code for job in failed} == {UNKNOWN_KIND_CODE}
+
+
+async def test_runnable_and_finished_jobs_are_not_failed(case: JobsCase) -> None:
+    queued = await _record(case)
+    expired = await _running(case)
+    await case.expire_lease(expired.id)
+    succeeded = await _running(case)
+    async with case.uow() as uow:
+        _ = await uow.job_runner.complete(succeeded.id, 1, "done")
+    finished = await _record(case, OTHER_KIND)
+    await case.force(finished.id, JobStatus.FAILED, 1)
+    jobs = (queued, expired, succeeded, finished)
+    before = [await _state(case, job) for job in jobs]
+
+    assert await _fail_unrunnable(case) == []
+    assert [await _state(case, job) for job in jobs] == before
+
+
+async def test_fail_unrunnable_stops_at_its_limit(case: JobsCase) -> None:
+    jobs = [await _record(case, OTHER_KIND) for _ in range(3)]
+
+    failed = await _fail_unrunnable(case, limit=2)
+
+    assert len(failed) == 2
+    statuses = sorted([(await _state(case, job)).status for job in jobs])
+    assert statuses == [JobStatus.FAILED, JobStatus.FAILED, JobStatus.QUEUED]
+
+
+async def test_a_stale_queued_job_is_taken_and_a_fresh_one_left(
+    case: JobsCase,
+) -> None:
+    stale = await _record(case)
+    await case.age(stale.id, STALE_AFTER + timedelta(seconds=30))
+    fresh = await _record(case)
+    await case.age(fresh.id, STALE_AFTER - timedelta(seconds=30))
+
+    assert await _take_stale(case) == [stale]
+    assert (await _state(case, fresh)).status == JobStatus.QUEUED
+
+
+async def test_an_expired_running_job_is_taken_once_its_dispatch_is_stale(
+    case: JobsCase,
+) -> None:
+    stale = await _running(case)
+    await case.expire_lease(stale.id)
+    await case.age(stale.id, STALE_AFTER + timedelta(seconds=30))
+    recent = await _running(case)
+    await case.expire_lease(recent.id)
+    await case.age(recent.id, STALE_AFTER - timedelta(seconds=30))
+    leased = await _running(case)
+    await case.age(leased.id, STALE_AFTER + timedelta(seconds=30))
+
+    assert await _take_stale(case) == [stale]
+    assert (await _state(case, stale)).status == JobStatus.RUNNING
+
+
+async def test_an_exhausted_job_is_not_taken(case: JobsCase) -> None:
+    job = await _record(case)
+    await case.force(job.id, JobStatus.QUEUED, KIND.max_attempts)
+    await case.age(job.id, STALE_AFTER + timedelta(seconds=30))
+
+    assert await _take_stale(case) == []
+
+
+async def test_a_taken_job_is_not_taken_again(case: JobsCase) -> None:
+    job = await _record(case)
+    await case.age(job.id, STALE_AFTER + timedelta(seconds=30))
+
+    first = await _take_stale(case)
+    second = await _take_stale(case)
+
+    assert (first, second) == ([job], [])
+
+
+async def test_take_stale_takes_the_oldest_dispatches_up_to_its_limit(
+    case: JobsCase,
+) -> None:
+    jobs = [await _record(case) for _ in range(3)]
+    for minutes, job in zip((8, 10, 6), jobs, strict=True):
+        await case.age(job.id, timedelta(minutes=minutes))
+
+    taken = await _take_stale(case, limit=2)
+
+    assert {job.id for job in taken} == {jobs[1].id, jobs[0].id}

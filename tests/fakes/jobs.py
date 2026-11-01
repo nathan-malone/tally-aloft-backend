@@ -3,7 +3,10 @@ from typing import TYPE_CHECKING
 from uuid import uuid7
 
 from tally_aloft.application.shared.jobs.kinds import (
+    ATTEMPTS_EXHAUSTED_CODE,
+    UNKNOWN_KIND_CODE,
     ClaimedJob,
+    FailedJob,
     JobId,
     JobStatus,
     QueuedJob,
@@ -51,6 +54,7 @@ class FakeJobRepository:
             attempts=0,
             max_attempts=kind.max_attempts,
             lease_until=None,
+            last_dispatched_at=self.table.clock.now(),
             payload=kind.payload_codec.encode(payload),
             result=None,
             error_code=None,
@@ -74,7 +78,7 @@ class FakeJobRunner:
         if (
             row is None
             or row.kind != kind_name
-            or row.attempts >= row.max_attempts
+            or _exhausted(row)
             or not _free(row, now)
         ):
             return None
@@ -130,11 +134,53 @@ class FakeJobRunner:
         )
         return True
 
+    async def fail_unrunnable(
+        self, kind_names: frozenset[str], limit: int
+    ) -> list[FailedJob]:
+        """Fail up to `limit` exhausted or unknown-kind jobs."""
+        now = self.table.clock.now()
+        failed: list[FailedJob] = []
+        for row in list(self.table.rows.values()):
+            if len(failed) >= limit:
+                break
+            unknown = row.kind not in kind_names
+            active = row.status in {JobStatus.QUEUED, JobStatus.RUNNING}
+            if not active or not (unknown or (_exhausted(row) and _free(row, now))):
+                continue
+            code = UNKNOWN_KIND_CODE if unknown else ATTEMPTS_EXHAUSTED_CODE
+            self.table.put(
+                replace(row, status=JobStatus.FAILED, error_code=code, lease_until=None)
+            )
+            failed.append(FailedJob(row.id, row.kind, code))
+        return failed
+
+    async def take_stale(self, stale_after: timedelta, limit: int) -> list[QueuedJob]:
+        """Mark up to `limit` stale jobs dispatched now, oldest dispatch first."""
+        now = self.table.clock.now()
+        stale = sorted(
+            (
+                row
+                for row in self.table.rows.values()
+                if not _exhausted(row)
+                and row.last_dispatched_at < now - stale_after
+                and _free(row, now)
+            ),
+            key=lambda row: row.last_dispatched_at,
+        )[:limit]
+        for row in stale:
+            self.table.put(replace(row, last_dispatched_at=now))
+        return [QueuedJob(row.id, row.kind) for row in stale]
+
     def _running(self, job_id: JobId, attempts: int) -> FakeJobRow | None:
         row = self.table.rows.get(job_id)
         if row is None or row.status != JobStatus.RUNNING or row.attempts != attempts:
             return None
         return row
+
+
+def _exhausted(row: FakeJobRow) -> bool:
+    """Return whether `row` has used every attempt its kind allows."""
+    return row.attempts >= row.max_attempts
 
 
 def _free(row: FakeJobRow, now: datetime) -> bool:

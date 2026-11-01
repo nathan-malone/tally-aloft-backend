@@ -21,6 +21,7 @@ class FakeJobRow:
     attempts: int
     max_attempts: int
     lease_until: datetime | None
+    last_dispatched_at: datetime
     payload: JsonValue
     result: JsonValue
     error_code: str | None
