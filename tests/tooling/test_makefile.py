@@ -4,7 +4,12 @@ import subprocess
 import pytest
 
 from tests.support.makefile import MAKEFILE, dry_run, make, targets
-from tests.support.worker_command import WORKER_MODULE, worker_command
+from tests.support.worker_command import (
+    SCHEDULER_MODULE,
+    WORKER_MODULE,
+    scheduler_command,
+    worker_command,
+)
 
 # Recipes run under cmd.exe as well as sh, so they hold plain commands only
 # (tally-aloft-docs/technical/make-commands.md, "Rules").
@@ -156,3 +161,9 @@ def test_worker_run_runs_the_image_contracts_command_in_one_process() -> None:
     [run] = dry_run("worker.run")
 
     assert run.endswith(" ".join([*worker_command(WORKER_MODULE), "--workers", "1"]))
+
+
+def test_scheduler_run_runs_the_image_contracts_command() -> None:
+    [run] = dry_run("scheduler.run")
+
+    assert run.endswith(" ".join(scheduler_command(SCHEDULER_MODULE)))

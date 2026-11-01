@@ -3,7 +3,7 @@
 #   make datastores.up    (docker compose up --detach --wait)
 #
 # Profile `app` also runs the migrations and every process in containers,
-# built from the one Dockerfile:
+# built from the one Dockerfile: the API, a worker and the scheduler.
 #
 #   make containers.up    (docker compose --profile app up --build)
 #   make containers.down ARGS=--volumes    (also deletes the database)
@@ -137,6 +137,26 @@ services:
         condition: service_completed_successfully
     # Room for the worker's 25-second wait for running tasks.
     stop_grace_period: 30s
+
+  scheduler:
+    profiles: ["app"]
+    build: .
+    # The image contract's scheduler command. Exactly one may run against these
+    # data stores, as Compose's default single replica does: each scheduler
+    # kicks every schedule. It serves no HTTP, so it has no health check.
+    command: ["taskiq", "scheduler", "tally_aloft.worker:scheduler"]
+    # Taskiq's scheduler has no SIGTERM handler, which it would need as PID 1
+    # to stop on one, so an init process runs it.
+    init: true
+    # The worker's settings: it imports the worker module, which reads them,
+    # though it never connects to the database.
+    environment:
+      TALLY_ENVIRONMENT: development
+      TALLY_DATABASE_URL: postgresql+asyncpg://tally_aloft_app:tally_aloft_app@postgres:5432/tally_aloft
+      TALLY_VALKEY_URL: redis://valkey:6379/0
+    depends_on:
+      valkey:
+        condition: service_healthy
 
 volumes:
   postgres-data:

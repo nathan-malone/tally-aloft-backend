@@ -1,6 +1,7 @@
 # End-to-end jobs: runs the test worker, with the test-only job kinds, in
 # place of the real one. The release image ships no job kind, so the worker
-# is built from the Dockerfile's `dev` stage, which adds tests/.
+# is built from the Dockerfile's `dev` stage, which adds tests/. The scheduler
+# stays as it is: the test worker registers the sweeper it kicks.
 #
 #   make containers.e2e.up        (docker compose -f compose.yaml -f compose.e2e.yaml --profile app up --build)
 #   make containers.e2e.job.run   (records a test job and waits for it)

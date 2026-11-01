@@ -56,10 +56,11 @@ help:
 	$(info $()  datastores.up           Start the local data stores in containers and wait until they're healthy)
 	$(info $()  api.run                 Run the API on the host with reload, settings from .env)
 	$(info $()  worker.run              Run a worker on the host, settings from .env)
+	$(info $()  scheduler.run           Run the scheduler on the host, settings from .env; only one per environment)
 	$(info $()  containers.up           Build and run the migrations and every process in containers)
 	$(info $()  containers.down         Stop and remove the containers; ARGS=--volumes also deletes the data)
 	$(info $()  containers.e2e.up       Like containers.up, with the test worker and its test-only jobs)
-	$(info $()  containers.e2e.job.run  Record a test job against the e2e containers and wait until it succeeds)
+	$(info $()  containers.e2e.job.run  Run a dispatched and a never-dispatched test job on the e2e containers, and wait until both succeed)
 	$(info )
 	$(info Migrations)
 	$(info $()  migrations.apply        Upgrade the database in .env to the latest migration)
@@ -172,6 +173,12 @@ api.run:
 .PHONY: worker.run
 worker.run:
 	uv run --locked --env-file .env taskiq worker tally_aloft.worker:broker --wait-tasks-timeout 25 --max-fails 1 --max-async-tasks 10 --workers 1
+
+# The image contract's scheduler command. Only one scheduler may run against
+# one set of data stores, or the sweeps double.
+.PHONY: scheduler.run
+scheduler.run:
+	uv run --locked --env-file .env taskiq scheduler tally_aloft.worker:scheduler
 
 .PHONY: containers.up
 containers.up:
