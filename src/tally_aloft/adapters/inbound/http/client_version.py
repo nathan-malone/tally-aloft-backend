@@ -2,8 +2,8 @@
 The client-version check: an "update required" answer for outdated app builds.
 
 It is an upgrade prompt, not a security control (client-contract.md, "Client
-versions"), so anything it can't judge passes: a request without both headers,
-a platform without a minimum, or a version that doesn't parse.
+versions"), so anything it can't judge passes: a request missing either
+header, a platform without a minimum, or a version that doesn't parse.
 """
 
 import logging
