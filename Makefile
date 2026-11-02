@@ -13,8 +13,8 @@
 # Set these on the command line, as in `make test ARGS="-k settings"`. Plain `=`
 # ignores same-named environment variables; Windows often sets PLATFORM.
 #
-# Extra arguments for the underlying tool: the test runner, or Compose for
-# containers.down.
+# Extra arguments for the underlying tool: the test runner, the breaking-change
+# script, or Compose for containers.down.
 ARGS =
 # The tag and, optionally, the platform for image.build.
 IMAGE = tally-aloft-backend:local
@@ -148,7 +148,7 @@ openapi.fix:
 .PHONY: openapi.breaking.check
 openapi.breaking.check:
 	$(banner)
-	uv run --locked python scripts/check_breaking_changes.py
+	uv run --locked python scripts/check_breaking_changes.py $(ARGS)
 
 .PHONY: test
 test:

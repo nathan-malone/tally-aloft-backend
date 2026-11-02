@@ -9,6 +9,9 @@ from tests.support.workflows import (
     run_commands,
 )
 
+CHECKOUT = "actions/checkout@"
+# The default branch's list, which the second checkout in verify fetches.
+CURRENT_RELEASES = "default-branch/supported-schema-releases.txt"
 DOWNLOAD = "actions/download-artifact@"
 UPLOAD = "actions/upload-artifact@"
 
@@ -95,14 +98,26 @@ def test_verify_checks_the_schema_before_uploading_it() -> None:
     verify = _jobs()["verify"]
 
     # A tag can point at a commit that never passed the pull-request checks,
-    # so the release checks for breaking changes itself before publishing.
-    assert run_commands(verify) == ["make openapi.check", "make openapi.breaking.check"]
+    # or at an older branch's commit, such as a hotfix's, whose list is out of
+    # date. So the release checks for breaking changes itself, against the
+    # default branch's list, before publishing.
+    assert run_commands(verify) == [
+        "make openapi.check",
+        f'make openapi.breaking.check ARGS="--releases {CURRENT_RELEASES} --skip $TAG"',
+    ]
+    current = verify.index("ref: ${{ github.event.repository.default_branch }}")
     breaking = verify.index("run: make openapi.breaking.check")
     upload = verify.index(UPLOAD)
-    assert breaking < upload
+    assert current < breaking < upload
+    checkout = verify[verify.rindex(CHECKOUT, 0, current) : breaking]
+    assert "path: default-branch\n" in checkout
+    assert "sparse-checkout: supported-schema-releases.txt\n" in checkout
+    assert "sparse-checkout-cone-mode: false\n" in checkout
     step = verify[breaking:upload]
     assert "GH_TOKEN: ${{ github.token }}" in step
     assert "GH_REPO: ${{ github.repository }}" in step
+    # A re-run of a listed tag's own release isn't checked against that tag.
+    assert "TAG: ${{ github.ref_name }}" in step
     assert "path: openapi.json" in verify[upload:]
     assert "if-no-files-found: error" in verify[upload:]
 

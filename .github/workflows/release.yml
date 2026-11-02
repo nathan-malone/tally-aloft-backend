@@ -37,14 +37,26 @@ jobs:
     # uv installs the locked environment itself, so no other setup is needed.
     - name: Check the API schema is current
       run: make openapi.check
+    # The default branch holds the current list. A tag on an older branch, such
+    # as a hotfix's, carries the list from when that branch was cut.
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.event.repository.default_branch }}
+        path: default-branch
+        sparse-checkout: supported-schema-releases.txt
+        sparse-checkout-cone-mode: false
+        persist-credentials: false
     # A tag can point at a commit that never passed the pull-request checks,
-    # so nothing is published that breaks a supported release's schema. It
-    # fetches those schemas with the read-only token.
+    # so nothing is published that breaks a currently supported release's
+    # schema. It fetches those schemas with the read-only token, and skips the
+    # tag being released, so a re-run of a listed tag's own release, to
+    # restore its asset, isn't checked against that missing asset.
     - name: Check the API schema for breaking changes
-      run: make openapi.breaking.check
+      run: make openapi.breaking.check ARGS="--releases default-branch/supported-schema-releases.txt --skip $TAG"
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
+        TAG: ${{ github.ref_name }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: openapi

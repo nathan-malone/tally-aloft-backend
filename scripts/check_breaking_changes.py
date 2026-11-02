@@ -137,13 +137,27 @@ def run_oasdiff(base: bytes, current: Path) -> int:
 
 
 def check(
-    releases: Path, current: Path, fetch: Fetch, compare: Compare = run_oasdiff
+    releases: Path,
+    current: Path,
+    fetch: Fetch,
+    compare: Compare = run_oasdiff,
+    *,
+    skip: str | None = None,
 ) -> int:
-    """Check `current` against every listed release, returning the exit code."""
+    """
+    Check `current` against every listed release, returning the exit code.
+
+    `skip` names a release not to check against: the one a release run is
+    publishing, so a re-run of a listed tag's own release isn't checked
+    against itself.
+    """
     try:
-        tags = read_releases(releases)
+        tags = [tag for tag in read_releases(releases) if tag != skip]
     except ReleaseListError as error:
         _report(str(error))
+        return 1
+    except OSError as error:
+        _report(f"{releases}: the supported-releases list can't be read ({error}).")
         return 1
     # Every tag is checked, so one run reports every release it breaks.
     compatible = [_check_release(tag, current, fetch, compare) for tag in tags]
@@ -169,8 +183,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--releases", type=Path, default=DEFAULT_RELEASES)
     _ = parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    _ = parser.add_argument("--skip", help="a listed tag not to check against")
     arguments = parser.parse_args(argv)
-    return check(arguments.releases, arguments.current, gh_fetch)
+    return check(arguments.releases, arguments.current, gh_fetch, skip=arguments.skip)
 
 
 if __name__ == "__main__":

@@ -95,6 +95,12 @@ def test_test_passes_arguments_to_pytest() -> None:
     assert dry_run("test", "ARGS=-k settings")[0].endswith("pytest -k settings")
 
 
+def test_the_breaking_change_check_passes_arguments_to_its_script() -> None:
+    [check] = dry_run("openapi.breaking.check", "ARGS=--releases other.txt")
+
+    assert check.endswith("check_breaking_changes.py --releases other.txt")
+
+
 def test_lint_fix_formats_before_its_final_check() -> None:
     fix = dry_run("lint.fix")
 

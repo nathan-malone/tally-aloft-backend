@@ -345,3 +345,42 @@ def test_oasdiff_judges_each_change(
     tmp_path: Path, base: bytes, current: bytes, code: int
 ) -> None:
     assert run_oasdiff(base, _current(tmp_path, current)) == code
+
+
+def test_the_release_being_checked_is_skipped(tmp_path: Path) -> None:
+    releases = _releases(tmp_path, "v0.1.0\nv0.2.0\n")
+    fetched: list[str] = []
+
+    def fetch(tag: str) -> bytes:
+        fetched.append(tag)
+        return b"{}"
+
+    code = check(releases, _current(tmp_path, b"{}"), fetch, _compatible, skip="v0.2.0")
+
+    assert code == 0
+    assert fetched == ["v0.1.0"]
+
+
+def test_main_skips_the_tag_it_is_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    releases = _releases(tmp_path, "v0.1.0\n")
+    current = _current(tmp_path, b"{}")
+    monkeypatch.setattr(script, "gh_fetch", _unused_fetch)
+
+    code = main(
+        ["--releases", str(releases), "--current", str(current), "--skip", "v0.1.0"]
+    )
+
+    assert code == 0
+
+
+def test_a_missing_list_fails_naming_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "supported-schema-releases.txt"
+
+    code = check(missing, _current(tmp_path, b"{}"), _unused_fetch, _unused_compare)
+
+    assert code == 1
+    assert str(missing) in capsys.readouterr().err
