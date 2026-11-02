@@ -34,6 +34,8 @@ VALIDATION_FAILED = "validation_failed"
 HTTP_ERROR_FALLBACK = "http_error"
 INTERNAL_ERROR = "internal_error"
 NOT_READY = "not_ready"
+# Answered by the client-version middleware, before any use case runs.
+CLIENT_VERSION_UNSUPPORTED = "client_version_unsupported"
 
 _INTERNAL_MESSAGE = "An internal error occurred."
 _VALIDATION_MESSAGE = "The request is invalid."

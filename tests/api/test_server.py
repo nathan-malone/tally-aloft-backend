@@ -20,6 +20,8 @@ from tests.support.server import (
     [
         ("TALLY_FORWARDED_ALLOW_IPS", "*"),
         ("TALLY_CORS_ORIGINS", "*"),
+        ("TALLY_MIN_CLIENT_VERSIONS", '{"desktop": "1.0.0"}'),
+        ("TALLY_MIN_CLIENT_VERSIONS", '{"ios": "latest"}'),
         ("TALLY_DATABASE_URL", "not-a-url"),
         ("TALLY_DATABASE_URL", None),
         ("TALLY_VALKEY_URL", "redis://cache.example/0?ssl_cert_reqs=none"),
@@ -28,6 +30,8 @@ from tests.support.server import (
     ids=[
         "forwarded-allow-ips",
         "cors-origins",
+        "min-client-versions-platform",
+        "min-client-versions-version",
         "database-url",
         "no-database-url",
         "valkey-url",

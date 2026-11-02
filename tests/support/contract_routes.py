@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from tally_aloft.bootstrap.container import Overrides
 
 router = APIRouter(prefix="/test", tags=["contract"])
+# Stands in for a vendor's webhook receiver, which the client-version check
+# skips. Like real receivers, it isn't in the schema.
+webhooks_router = APIRouter(prefix="/webhooks", tags=["contract"])
 
 
 class ContractMappedError(ApplicationError):
@@ -87,8 +90,16 @@ async def crash() -> None:
     raise RuntimeError(LEAK_MARKER)
 
 
-def contract_app(overrides: Overrides | None = None) -> FastAPI:
-    """Return the app, allowing `ORIGIN`, with these routes mounted."""
-    app = create_app(Settings.for_tests(cors_origins=ORIGIN), overrides)
+@webhooks_router.post(
+    "/test", status_code=HTTPStatus.NO_CONTENT, include_in_schema=False
+)
+async def webhook() -> None:
+    """Accept a webhook delivery."""
+
+
+def contract_app(overrides: Overrides | None = None, **settings: object) -> FastAPI:
+    """Return the app, allowing `ORIGIN`, with these routes and `settings`."""
+    app = create_app(Settings.for_tests(cors_origins=ORIGIN, **settings), overrides)
     app.include_router(router)
+    app.include_router(webhooks_router)
     return app

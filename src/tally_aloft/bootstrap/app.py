@@ -8,6 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http import health
+from tally_aloft.adapters.inbound.http.client_version import ClientVersionMiddleware
 from tally_aloft.adapters.inbound.http.errors import (
     ERROR_STATUSES,
     ErrorBody,
@@ -15,6 +16,7 @@ from tally_aloft.adapters.inbound.http.errors import (
     install_exception_handlers,
 )
 from tally_aloft.adapters.inbound.http.operation_ids import operation_id
+from tally_aloft.adapters.inbound.http.version_policy import ClientVersionPolicy
 from tally_aloft.bootstrap.container import (
     TASKS,
     Overrides,
@@ -100,8 +102,8 @@ def _middleware(settings: Settings) -> list[Middleware]:
     3. The unhandled-error middleware sits inside CORS, so its `500`s carry
        CORS headers. Starlette's own `ServerErrorMiddleware` wraps this whole
        list, and its responses have none.
-
-    Later middleware, such as the client-version check, goes after these.
+    4. The client-version check sits inside the unhandled-error middleware, so
+       its `400`s carry CORS headers too.
     """
     return [
         Middleware(
@@ -116,4 +118,8 @@ def _middleware(settings: Settings) -> list[Middleware]:
             allow_credentials=False,
         ),
         Middleware(UnhandledErrorMiddleware),
+        Middleware(
+            ClientVersionMiddleware,
+            policy=ClientVersionPolicy(settings.min_client_versions),
+        ),
     ]
