@@ -24,8 +24,10 @@ def _jobs() -> dict[str, str]:
 def test_runs_on_pushed_version_tags_only() -> None:
     workflow = _workflow()
 
+    # Only vX.Y.Z, the form supported-schema-releases.txt accepts.
+    only_releases = re.escape('    - "v[0-9]+.[0-9]+.[0-9]+"')
     trigger = re.search(
-        r'^on:\n  push:\n    tags:\n    - "v\*"\n\n', workflow, re.MULTILINE
+        rf"^on:\n  push:\n    tags:\n{only_releases}\n\n", workflow, re.MULTILINE
     )
 
     assert trigger is not None

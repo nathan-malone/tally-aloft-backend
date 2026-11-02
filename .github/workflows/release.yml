@@ -4,10 +4,12 @@
 # project code: it never checks out the repository.
 name: Release
 
+# Only vX.Y.Z tags, the form supported-schema-releases.txt accepts; GitHub's
+# filter must match the whole tag name.
 on:
   push:
     tags:
-    - "v*"
+    - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions: {}
 
