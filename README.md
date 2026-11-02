@@ -20,7 +20,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make packages.install` | Install the locked dependencies |
 | `make lint.fix` | Apply the linter's safe fixes and format the code |
 | `make check` | Every check and the full test suite, as CI runs them |
-| `make check.fast` | The same, without the tests that need Docker |
+| `make check.fast` | The same, without the breaking-change check and the tests that need Docker |
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
 | `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
 | `make datastores.up` | Start the local data stores in containers and wait until they're healthy |
@@ -122,9 +122,9 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
 
 ## Checks
 
-`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema) and `make test` (tests).
+`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema), `make openapi.breaking.check` (whether `openapi.json` breaks a supported release's schema; see [Supported schema releases](#supported-schema-releases)) and `make test` (tests).
 
-`make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop.
+`make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop, and `make check.fast` also skips the breaking-change check, which needs Docker and `gh` once a release is listed.
 
 Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS="-n0"` runs them in one process, which `--pdb` needs, and `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` caps the worker count.
 
@@ -133,6 +133,15 @@ Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS=
 Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema, then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
 
 A stale `openapi.json` fails the workflow before anything is published. Run `make openapi.fix` on `main`, merge the change, and tag the new commit.
+
+### Supported schema releases
+
+`supported-schema-releases.txt` lists, one per line, the backend tags whose `openapi.json` a supported client release was built against. `#` starts a comment. On every pull request, `make openapi.breaking.check` downloads each listed tag's `openapi.json` release asset and fails if the current `openapi.json` breaks it, as the [client contract](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/client-contract.md) defines a breaking change. An empty list passes.
+
+- **Add a tag** when a client release built against that tag's schema ships.
+- **Remove a tag** only when no supported client release uses it, in a pull request of its own that names the client release that dropped support. Never remove one to get a breaking change through.
+- **Locally**, with a tag listed, the check needs Docker running and the GitHub CLI signed in (`gh auth login`).
+- **A tag without an asset** fails the check, naming the tag. If that tag's release workflow failed, fix the cause and re-run it from the Actions tab. If the tag predates the release workflow, remove it: no client could have synced from it.
 
 ## Settings
 

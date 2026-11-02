@@ -1,0 +1,4 @@
+# Backend release tags (vX.Y.Z) whose openapi.json a supported client release
+# was built against, one per line. `make openapi.breaking.check` fails when the
+# current openapi.json breaks any of them. The README's "Supported schema
+# releases" section says when to add and remove a tag.

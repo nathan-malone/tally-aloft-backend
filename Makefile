@@ -46,10 +46,11 @@ help:
 	$(info $()  slop.check              Check for patterns AI coding agents leave behind)
 	$(info $()  openapi.check           Check that openapi.json matches the API's schema)
 	$(info $()  openapi.fix             Write openapi.json from the API's schema)
+	$(info $()  openapi.breaking.check  Check openapi.json for breaking changes against each supported release's schema)
 	$(info $()  test                 The full test suite; needs Docker. ARGS="..." goes to the test runner)
 	$(info $()  test.fast               The tests that don't need Docker. ARGS="..." goes to the test runner)
 	$(info $()  check                   Every check and the full test suite, as CI runs them)
-	$(info $()  check.fast              Every check and the tests that don't need Docker)
+	$(info $()  check.fast              Every check but the breaking-change check, and the tests that don't need Docker)
 	$(info )
 	$(info Running)
 	$(info $()  image.build             Build the image as IMAGE (default $(IMAGE)), for PLATFORM if set)
@@ -96,8 +97,9 @@ packages.outdated.show:
 	uv tree --locked --outdated --depth 1
 	pnpm outdated
 
-# Every *.check target is a prerequisite of check and check.fast, and CI runs
-# each of check's prerequisites; tests/tooling checks both.
+# Every *.check target is a prerequisite of check, and of check.fast unless it
+# needs Docker or the network; CI runs each of check's prerequisites.
+# tests/tooling checks both.
 
 .PHONY: lint.check
 lint.check:
@@ -140,6 +142,14 @@ openapi.check:
 openapi.fix:
 	uv run --locked python scripts/export_openapi.py
 
+# Compares openapi.json with each release in supported-schema-releases.txt.
+# Once a tag is listed it needs Docker and an authenticated gh, so check.fast
+# leaves it out.
+.PHONY: openapi.breaking.check
+openapi.breaking.check:
+	$(banner)
+	uv run --locked python scripts/check_breaking_changes.py
+
 .PHONY: test
 test:
 	$(banner)
@@ -151,7 +161,7 @@ test.fast:
 	uv run --locked pytest -m "not container" $(ARGS)
 
 .PHONY: check
-check: lint.check types.check boundaries.check slop.check openapi.check test
+check: lint.check types.check boundaries.check slop.check openapi.check openapi.breaking.check test
 
 .PHONY: check.fast
 check.fast: lint.check types.check boundaries.check slop.check openapi.check test.fast
