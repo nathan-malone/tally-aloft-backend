@@ -15,6 +15,10 @@ from tests.support.worker_command import (
 # (tally-aloft-docs/technical/make-commands.md, "Rules").
 SHELL_SYNTAX = re.compile(r"[|&;<>'`*^%]|\$\$")
 AGGREGATES = [("check", "test"), ("check.fast", "test.fast")]
+# Checks that need Docker or the network, which check.fast leaves out: once a
+# tag is listed, the breaking-change check pulls oasdiff's image and fetches
+# release assets with gh.
+FAST_EXCLUDED = {"check.fast": {"openapi.breaking.check"}}
 
 
 def _makefile() -> str:
@@ -70,7 +74,7 @@ def test_aggregates_run_every_check_then_their_tests(
     *checks, last = targets()[aggregate]
     every_check = {target for target in targets() if target.endswith(".check")}
 
-    assert set(checks) == every_check
+    assert set(checks) == every_check - FAST_EXCLUDED.get(aggregate, set())
     assert last == tests
 
 
@@ -89,6 +93,12 @@ def test_test_fast_skips_only_the_container_tests() -> None:
 
 def test_test_passes_arguments_to_pytest() -> None:
     assert dry_run("test", "ARGS=-k settings")[0].endswith("pytest -k settings")
+
+
+def test_the_breaking_change_check_passes_arguments_to_its_script() -> None:
+    [check] = dry_run("openapi.breaking.check", "ARGS=--releases other.txt")
+
+    assert check.endswith("check_breaking_changes.py --releases other.txt")
 
 
 def test_lint_fix_formats_before_its_final_check() -> None:

@@ -94,3 +94,17 @@ def test_a_job_use_case_importing_taskiq_breaks_a_contract(package: Path) -> Non
     assert "Domain and application have no framework or vendor code BROKEN" in (
         result.stdout
     )
+
+
+def test_the_version_policy_importing_a_framework_breaks_a_contract(
+    package: Path,
+) -> None:
+    module = package / "adapters" / "inbound" / "http" / "version_policy.py"
+    module.write_text(module.read_text() + "\nimport starlette\n")
+
+    result = _lint_imports(package)
+
+    assert result.returncode != 0
+    assert "The client-version policy imports only the standard library BROKEN" in (
+        result.stdout
+    )

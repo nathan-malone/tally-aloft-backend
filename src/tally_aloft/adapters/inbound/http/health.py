@@ -5,10 +5,16 @@ from fastapi import APIRouter, Response
 from tally_aloft.adapters.inbound.http.dependencies import UseCasesDep  # noqa: TC001  # FastAPI reads route annotations at runtime.
 from tally_aloft.adapters.inbound.http.errors import NOT_READY, error_response
 
+LIVEZ_PATH = "/livez"
+READYZ_PATH = "/readyz"
+# The client-version check skips these, so a load balancer's or an operator's
+# probe never needs app headers.
+HEALTH_PATHS = frozenset({LIVEZ_PATH, READYZ_PATH})
+
 router = APIRouter()
 
 
-@router.get("/livez", include_in_schema=False)
+@router.get(LIVEZ_PATH, include_in_schema=False)
 async def livez() -> Response:
     """
     Report that this process routes and handles HTTP requests.
@@ -18,7 +24,7 @@ async def livez() -> Response:
     return Response(status_code=HTTPStatus.OK)
 
 
-@router.get("/readyz", include_in_schema=False)
+@router.get(READYZ_PATH, include_in_schema=False)
 async def readyz(use_cases: UseCasesDep) -> Response:
     """
     Report whether every dependency works.

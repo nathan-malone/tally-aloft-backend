@@ -1,10 +1,10 @@
 import ipaddress
+import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
+from ipaddress import IPv4Network, IPv6Network
 from typing import Annotated, override
-from urllib.parse import urlsplit
 
 from pydantic import (
     Field,
@@ -21,10 +21,15 @@ from pydantic_settings import (
     SettingsError,
 )
 
+from tally_aloft.adapters.inbound.http.version_policy import (
+    ClientPlatform,
+    ClientVersion,
+)
 from tally_aloft.bootstrap.connection_urls import (
     check_database_url,
     check_valkey_url,
 )
+from tally_aloft.bootstrap.origins import check_origin
 
 _ENV_PREFIX = "TALLY_"
 # pydantic-settings 2.16 words a parse error as `error parsing value for field
@@ -34,17 +39,7 @@ _PARSE_ERROR_FIELD = re.compile(r'field "(?P<field>\w+)"')
 
 
 _TRUSTS_EVERYONE = "would trust every address; list the proxies' networks"
-_ALLOWS_EVERY_ORIGIN = "would allow every origin; list the web app's origins"
-_NOT_AN_ORIGIN = (
-    "must be a scheme://host[:port] as a browser sends it: lowercase, with no "
-    "path and no default port"
-)
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-# A host label a browser parses as a number, which makes the host IPv4.
-_NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
-# The URL Standard's forbidden domain code points. A browser can't parse a host
-# with one, and decodes a percent-encoded one, so it never sends either form.
-_FORBIDDEN_DOMAIN_CHARACTER = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
+_NOT_A_VERSION = "must be a MAJOR.MINOR.PATCH string, such as 1.4.0"
 
 # For profiles and tests that never connect. Port 9 on localhost refuses
 # connections, so a stray one fails at once instead of reaching a developer's
@@ -95,6 +90,13 @@ class Settings(BaseSettings):
     # lowercase without a default port, so any other form is rejected rather
     # than silently matching nothing.
     cors_origins: Annotated[tuple[str, ...], NoDecode] = ()
+
+    # The lowest app version each platform still supports, as a JSON object
+    # such as {"ios": "1.4.0"}. Older apps get `400 client_version_unsupported`;
+    # a platform without an entry has no minimum.
+    min_client_versions: Annotated[Mapping[ClientPlatform, ClientVersion], NoDecode] = (
+        Field(default_factory=dict)
+    )
 
     # The application role's connection. Migrations connect as the owner role,
     # through MigrationSettings, which this model never reads.
@@ -165,7 +167,25 @@ class Settings(BaseSettings):
         if parts is None:
             return value
         origins = [str(part).strip() for part in parts]
-        return tuple(_check_origin(origin) for origin in origins if origin != "")
+        return tuple(check_origin(origin) for origin in origins if origin != "")
+
+    @field_validator("min_client_versions", mode="before")
+    @classmethod
+    def _parse_min_versions(cls, value: object) -> object:
+        """
+        Parse a JSON object of versions; an empty value means no minimums.
+
+        Only a `ValueError` or a pydantic error may escape, so a bad value stops
+        the process with the variable's name rather than a traceback.
+        """
+        if isinstance(value, str):
+            if value.strip() == "":
+                return dict[ClientPlatform, ClientVersion]()
+            value = json.loads(value)
+        versions = _mapping(value)
+        if versions is None:
+            return value
+        return {key: _parse_version(version) for key, version in versions.items()}
 
     @classmethod
     def for_tests(cls, **values: object) -> Settings:
@@ -290,69 +310,25 @@ def _list_parts(value: object) -> Sequence[object] | None:
     return None
 
 
-def _check_origin(origin: str) -> str:
-    """Return `origin` if it is exactly a browser's form of one, else raise."""
-    if origin == "*":
-        raise ValueError(_ALLOWS_EVERY_ORIGIN)
-    parts = urlsplit(origin)
-    try:
-        port = parts.port
-    except ValueError:
-        raise ValueError(_NOT_AN_ORIGIN) from None
-    host = "" if parts.hostname is None else _browser_host(parts.hostname)
-    # urlsplit lowercases the scheme and host and leaves out any path, query,
-    # fragment or user info, so an origin that differs from this rebuilt form
-    # isn't one a browser sends. Browsers also send a non-ASCII host in its
-    # punycode form.
-    canonical = f"{parts.scheme}://{host}" + ("" if port is None else f":{port}")
-    if (
-        parts.scheme not in _DEFAULT_PORTS
-        or host == ""
-        or not host.isascii()
-        or port in {0, _DEFAULT_PORTS[parts.scheme]}
-        or canonical != origin
-    ):
-        raise ValueError(_NOT_AN_ORIGIN)
-    return origin
-
-
-def _browser_host(hostname: str) -> str:
+def _mapping(value: object) -> Mapping[object, object] | None:
     """
-    Return `hostname` as a browser writes it in an origin, or "" if it can't be.
+    Return a map setting's value as a mapping, or `None` if it isn't one.
 
-    A browser writes an IPv6 address in brackets, compressed, with no zone and
-    no dotted IPv4 part, and reads a host whose last label is a number as an
-    IPv4 address, which it writes as four decimal numbers: `127.1` is sent as
-    `127.0.0.1`. A host with a forbidden or percent-encoded character can't be
-    written. Other hosts are kept as they are.
+    It narrows `object` for the type checker, as `_list_parts` does for lists.
     """
-    if ":" in hostname:
-        return _browser_ipv6_host(hostname)
-    if _FORBIDDEN_DOMAIN_CHARACTER.search(hostname) is not None:
-        return ""
-    last_label = hostname.removesuffix(".").rpartition(".")[2]
-    if _NUMBER_LABEL.fullmatch(last_label) is not None:
-        try:
-            return str(IPv4Address(hostname))
-        except ValueError:
-            return ""
-    return hostname
+    if isinstance(value, Mapping):
+        return value
+    return None
 
 
-def _browser_ipv6_host(hostname: str) -> str:
-    """Return an IPv6 `hostname` as `_browser_host` describes."""
-    try:
-        address = IPv6Address(hostname)
-    except ValueError:
-        return ""
-    if address.scope_id is not None:
-        return ""
-    mapped = address.ipv4_mapped
-    if mapped is None:
-        # Python compresses as browsers do: the first longest zero run.
-        return f"[{address.compressed}]"
-    # Python writes the IPv4 part dotted; browsers write it in hex.
-    return f"[::ffff:{int(mapped) >> 16:x}:{int(mapped) & 0xFFFF:x}]"
+def _parse_version(version: object) -> ClientVersion:
+    """Return a minimum version, from its text or as already parsed."""
+    if isinstance(version, ClientVersion):
+        return version
+    parsed = ClientVersion.parse(version) if isinstance(version, str) else None
+    if parsed is None:
+        raise ValueError(_NOT_A_VERSION)
+    return parsed
 
 
 def load_settings() -> Settings:

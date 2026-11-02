@@ -6,6 +6,10 @@ import pytest
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict, SettingsError
 
+from tally_aloft.adapters.inbound.http.version_policy import (
+    ClientPlatform,
+    ClientVersion,
+)
 from tally_aloft.bootstrap.settings import (
     Environment,
     MigrationSettings,
@@ -132,6 +136,76 @@ def test_parses_cors_origins(
     monkeypatch.setenv("TALLY_CORS_ORIGINS", value)
 
     assert Settings().cors_origins == expected
+
+
+def test_has_no_client_minimums_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
+    assert Settings().min_client_versions == {}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (
+            '{"ios": "1.4.0", "web": "2.0.0"}',
+            {
+                ClientPlatform.IOS: ClientVersion(1, 4, 0),
+                ClientPlatform.WEB: ClientVersion(2, 0, 0),
+            },
+        ),
+        ("{}", {}),
+        ("", {}),
+        ("  ", {}),
+    ],
+)
+def test_parses_min_client_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: dict[ClientPlatform, ClientVersion],
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_MIN_CLIENT_VERSIONS", value)
+
+    assert Settings().min_client_versions == expected
+
+
+def test_test_settings_take_parsed_or_text_minimums() -> None:
+    settings = Settings.for_tests(
+        min_client_versions={"ios": "1.4.0", "web": ClientVersion(2, 0, 0)}
+    )
+
+    assert settings.min_client_versions == {
+        ClientPlatform.IOS: ClientVersion(1, 4, 0),
+        ClientPlatform.WEB: ClientVersion(2, 0, 0),
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '{"desktop": "1.0.0"}',
+        '{"ios": "latest"}',
+        '{"ios": "1.4"}',
+        '{"ios": 1}',
+        '{"ios": null}',
+        '{"ios": [1, 4, 0]}',
+        "[]",
+        "not json",
+    ],
+)
+def test_load_settings_rejects_invalid_min_client_versions(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_MIN_CLIENT_VERSIONS", value)
+
+    with pytest.raises(SystemExit) as error:
+        load_settings()
+
+    message = _exit_message(error)
+    assert message.startswith("Invalid settings: TALLY_MIN_CLIENT_VERSIONS (")
+    assert value not in message
 
 
 @pytest.mark.parametrize(

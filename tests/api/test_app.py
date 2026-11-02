@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from tally_aloft.adapters.inbound.http.client_version import ClientVersionMiddleware
 from tally_aloft.adapters.inbound.http.errors import UnhandledErrorMiddleware
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
 from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
@@ -65,6 +66,7 @@ def test_middleware_order_from_the_outside_in() -> None:
         ProxyHeadersMiddleware,
         CORSMiddleware,
         UnhandledErrorMiddleware,
+        ClientVersionMiddleware,
     ]
 
 
