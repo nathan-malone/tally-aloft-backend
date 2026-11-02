@@ -2,7 +2,11 @@ preset = "strict"
 check-unannotated-defs = true
 python-version = "3.14"
 project-includes = ["src", "tests", "scripts", "migrations"]
-search-path = [".", "src"]
+# `src` comes first, so a module under it has one name, `tally_aloft.…`, both
+# when it is checked and when another module imports it. With `.` first, a
+# module checked on its own is `src.tally_aloft.…`, and its own types don't
+# match the ones a Protocol it imports was written against.
+search-path = ["src", "."]
 
 # Pyrefly 1.4's off-by-default error kinds that the strict preset leaves off
 # are all errors here, and so are the kinds that default to a warning, so the

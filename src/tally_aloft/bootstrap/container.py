@@ -5,13 +5,18 @@ from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
+from tally_aloft.adapters.inbound.jobs.idempotency_cleanup import CLEANUP_TASK
 from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.outbound.postgres.health import PostgresCheck
 from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.adapters.outbound.redis.health import ValkeyCheck
+from tally_aloft.adapters.outbound.system.clock import SystemClock
 from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.application.registry import UseCases
 from tally_aloft.application.shared.check_readiness import CheckReadiness
+from tally_aloft.application.shared.delete_expired_idempotency_keys import (
+    DeleteExpiredIdempotencyKeys,
+)
 from tally_aloft.application.shared.jobs.claim_job import ClaimJob
 from tally_aloft.application.shared.jobs.complete_job import CompleteJob
 from tally_aloft.application.shared.jobs.fail_job_attempt import FailJobAttempt
@@ -33,7 +38,7 @@ if TYPE_CHECKING:
 
 # Every task the production worker runs, and the scheduler schedules. Job
 # kinds and scheduled tasks join it as features and maintenance jobs are built.
-TASKS: tuple[TaskDefinition, ...] = (SWEEP_TASK,)
+TASKS: tuple[TaskDefinition, ...] = (SWEEP_TASK, CLEANUP_TASK)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -82,6 +87,9 @@ def build_use_cases(
             kind_names=kind_names,
             stale_after=timedelta(seconds=settings.job_stale_after),
             batch_size=settings.sweep_batch_size,
+        ),
+        delete_expired_idempotency_keys=DeleteExpiredIdempotencyKeys(
+            uow=uow, clock=SystemClock()
         ),
     )
 

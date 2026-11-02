@@ -9,8 +9,9 @@ from tally_aloft.application.shared.jobs.renew_job_lease import RenewJobLease
 from tally_aloft.domain.shared.ids import PilotId
 from tests.fakes.clock import FakeClock
 from tests.fakes.database import FakeDatabase
-from tests.fakes.unit_of_work import FakeUnitOfWork
+from tests.fakes.unit_of_work import FakeUnitOfWork, fake_unit_of_work_factory
 from tests.support.codecs import JSON
+from tests.support.counting import CountingFactory
 
 if TYPE_CHECKING:
     from tally_aloft.application.shared.jobs.kinds import QueuedJob
@@ -23,18 +24,6 @@ KIND = JobKind(
 )
 
 
-class CountingFactory:
-    """A fake unit-of-work factory that counts the units of work it makes."""
-
-    def __init__(self, database: FakeDatabase) -> None:
-        self.database = database
-        self.made = 0
-
-    def __call__(self) -> FakeUnitOfWork:
-        self.made += 1
-        return FakeUnitOfWork(self.database)
-
-
 async def _recorded(database: FakeDatabase) -> QueuedJob:
     async with FakeUnitOfWork(database) as uow:
         return await uow.jobs.record(PilotId.new(), KIND, {"n": 1})
@@ -44,7 +33,7 @@ async def test_claim_uses_one_unit_of_work_and_the_kinds_lease() -> None:
     clock = FakeClock()
     database = FakeDatabase(clock)
     job = await _recorded(database)
-    factory = CountingFactory(database)
+    factory = CountingFactory(fake_unit_of_work_factory(database))
 
     claimed = await ClaimJob(factory)(job.id, KIND)
 
@@ -57,8 +46,10 @@ async def test_renew_complete_and_fail_each_use_one_unit_of_work() -> None:
     clock = FakeClock()
     database = FakeDatabase(clock)
     job = await _recorded(database)
-    _ = await ClaimJob(CountingFactory(database))(job.id, KIND)
-    factory = CountingFactory(database)
+    _ = await ClaimJob(CountingFactory(fake_unit_of_work_factory(database)))(
+        job.id, KIND
+    )
+    factory = CountingFactory(fake_unit_of_work_factory(database))
 
     clock.advance(timedelta(seconds=10))
     assert await RenewJobLease(factory)(job.id, 1, KIND.lease)
@@ -79,7 +70,7 @@ async def test_renew_complete_and_fail_each_use_one_unit_of_work() -> None:
 async def test_a_lost_claim_reports_false_through_each_use_case() -> None:
     database = FakeDatabase(FakeClock())
     job = await _recorded(database)
-    factory = CountingFactory(database)
+    factory = CountingFactory(fake_unit_of_work_factory(database))
     _ = await ClaimJob(factory)(job.id, KIND)
 
     assert not await RenewJobLease(factory)(job.id, 7, KIND.lease)

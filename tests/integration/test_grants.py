@@ -133,3 +133,26 @@ async def test_the_app_role_may_update_jobs_but_never_delete_them(
 
     delete = "DELETE FROM jobs"
     assert await _sqlstate_as_app(postgres_server, delete) == INSUFFICIENT_PRIVILEGE
+
+
+async def test_the_app_role_may_store_results_and_delete_idempotency_keys(
+    database: PostgresDatabase,
+) -> None:
+    insert = (
+        "INSERT INTO idempotency_keys (pilot_id, operation, key, request_hash) "
+        "VALUES (uuidv7(), 'test.grants', 'key', 'hash')"
+    )
+    await execute(database.app_url, insert)
+    await execute(database.app_url, "UPDATE idempotency_keys SET result = '1'")
+    await execute(database.app_url, "DELETE FROM idempotency_keys")
+
+
+@pytest.mark.parametrize(
+    "assignment", ["request_hash = 'other'", "created_at = now()", "key = 'other'"]
+)
+async def test_the_app_role_may_change_no_other_idempotency_key_column(
+    postgres_server: PostgresDatabase, assignment: str
+) -> None:
+    update = f"UPDATE idempotency_keys SET {assignment}"  # noqa: S608  # Fixed test input.
+
+    assert await _sqlstate_as_app(postgres_server, update) == INSUFFICIENT_PRIVILEGE

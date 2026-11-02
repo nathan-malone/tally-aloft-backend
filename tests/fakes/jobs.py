@@ -11,29 +11,18 @@ from tally_aloft.application.shared.jobs.kinds import (
     JobStatus,
     QueuedJob,
 )
-from tests.fakes.database import FakeJobRow
+from tests.fakes.database import FakeJobRow, FakeTable
 
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
 
-    from tally_aloft.application.ports.clock import Clock
     from tally_aloft.application.shared.codec import JsonValue
     from tally_aloft.application.shared.jobs.kinds import JobKind
     from tally_aloft.domain.shared.ids import PilotId
 
 
-@dataclass(frozen=True, slots=True)
-class FakeJobTable:
-    """A unit of work's working copy of the jobs, and the rows it changed."""
-
-    rows: dict[JobId, FakeJobRow]
-    changed: set[JobId]
-    clock: Clock
-
-    def put(self, row: FakeJobRow) -> None:
-        """Store `row` in the working copy and mark it changed."""
-        self.rows[row.id] = row
-        self.changed.add(row.id)
+# A unit of work's working copy of the jobs.
+type FakeJobTable = FakeTable[JobId, FakeJobRow]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +48,7 @@ class FakeJobRepository:
             result=None,
             error_code=None,
         )
-        self.table.put(row)
+        self.table.put(row.id, row)
         return QueuedJob(row.id, kind.name)
 
 
@@ -88,7 +77,7 @@ class FakeJobRunner:
             attempts=row.attempts + 1,
             lease_until=now + lease,
         )
-        self.table.put(claimed)
+        self.table.put(job_id, claimed)
         return ClaimedJob(
             id=job_id,
             pilot_id=claimed.pilot_id,
@@ -102,7 +91,7 @@ class FakeJobRunner:
         row = self._running(job_id, attempts)
         if row is None:
             return False
-        self.table.put(replace(row, lease_until=self.table.clock.now() + lease))
+        self.table.put(job_id, replace(row, lease_until=self.table.clock.now() + lease))
         return True
 
     async def complete(self, job_id: JobId, attempts: int, result: JsonValue) -> bool:
@@ -111,13 +100,14 @@ class FakeJobRunner:
         if row is None:
             return False
         self.table.put(
+            job_id,
             replace(
                 row,
                 status=JobStatus.SUCCEEDED,
                 result=result,
                 error_code=None,
                 lease_until=None,
-            )
+            ),
         )
         return True
 
@@ -130,7 +120,8 @@ class FakeJobRunner:
             JobStatus.FAILED if row.attempts >= row.max_attempts else JobStatus.QUEUED
         )
         self.table.put(
-            replace(row, status=status, error_code=error_code, lease_until=None)
+            job_id,
+            replace(row, status=status, error_code=error_code, lease_until=None),
         )
         return True
 
@@ -149,7 +140,10 @@ class FakeJobRunner:
                 continue
             code = UNKNOWN_KIND_CODE if unknown else ATTEMPTS_EXHAUSTED_CODE
             self.table.put(
-                replace(row, status=JobStatus.FAILED, error_code=code, lease_until=None)
+                row.id,
+                replace(
+                    row, status=JobStatus.FAILED, error_code=code, lease_until=None
+                ),
             )
             failed.append(FailedJob(row.id, row.kind, code))
         return failed
@@ -168,7 +162,7 @@ class FakeJobRunner:
             key=lambda row: row.last_dispatched_at,
         )[:limit]
         for row in stale:
-            self.table.put(replace(row, last_dispatched_at=now))
+            self.table.put(row.id, replace(row, last_dispatched_at=now))
         return [QueuedJob(row.id, row.kind) for row in stale]
 
     def _running(self, job_id: JobId, attempts: int) -> FakeJobRow | None:

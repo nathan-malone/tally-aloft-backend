@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Protocol, Self
 if TYPE_CHECKING:
     from types import TracebackType
 
+    from tally_aloft.application.shared.idempotency import IdempotencyRepository
     from tally_aloft.application.shared.jobs.ports import JobRepository
 
 
@@ -19,6 +20,11 @@ class SharedUnitOfWork(Protocol):
     @property
     def jobs(self) -> JobRepository:
         """Return the pilot-scoped job repository on this unit of work."""
+        ...
+
+    @property
+    def idempotency(self) -> IdempotencyRepository:
+        """Return the pilot-scoped idempotency-key repository on this unit of work."""
         ...
 
     async def __aenter__(self) -> Self:

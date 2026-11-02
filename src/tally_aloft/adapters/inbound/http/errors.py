@@ -17,6 +17,7 @@ from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import BaseModel, JsonValue
 from starlette.exceptions import HTTPException
 
+from tally_aloft.application.shared.errors import IdempotencyKeyReusedError
 from tally_aloft.domain.shared.errors import CodedError, is_concrete
 
 if TYPE_CHECKING:
@@ -50,7 +51,9 @@ HTTP_ERROR_CODES: Final[Mapping[int, str]] = MappingProxyType(
 
 # The status of each concrete domain and application error, keyed by its exact
 # class: a subclass needs its own entry. A test fails when one is missing.
-ERROR_STATUSES: Final[Mapping[type[CodedError], HTTPStatus]] = MappingProxyType({})
+ERROR_STATUSES: Final[Mapping[type[CodedError], HTTPStatus]] = MappingProxyType(
+    {IdempotencyKeyReusedError: HTTPStatus.UNPROCESSABLE_CONTENT}
+)
 
 
 class ErrorBody(BaseModel):

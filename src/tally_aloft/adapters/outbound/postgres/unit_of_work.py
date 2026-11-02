@@ -2,6 +2,10 @@ from typing import TYPE_CHECKING, Self
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from tally_aloft.adapters.outbound.postgres.idempotency import (
+    PostgresIdempotencyMaintenance,
+    PostgresIdempotencyRepository,
+)
 from tally_aloft.adapters.outbound.postgres.jobs import (
     PostgresJobRepository,
     PostgresJobRunner,
@@ -31,6 +35,8 @@ class PostgresUnitOfWork:
         self._session: AsyncSession | None = None
         self._jobs: PostgresJobRepository | None = None
         self._job_runner: PostgresJobRunner | None = None
+        self._idempotency: PostgresIdempotencyRepository | None = None
+        self._idempotency_maintenance: PostgresIdempotencyMaintenance | None = None
         self._used = False
 
     async def __aenter__(self) -> Self:
@@ -44,6 +50,8 @@ class PostgresUnitOfWork:
         self._transaction = transaction
         self._jobs = PostgresJobRepository(self._session)
         self._job_runner = PostgresJobRunner(self._session)
+        self._idempotency = PostgresIdempotencyRepository(self._session)
+        self._idempotency_maintenance = PostgresIdempotencyMaintenance(self._session)
         return self
 
     async def __aexit__(
@@ -58,6 +66,8 @@ class PostgresUnitOfWork:
         self._session = None
         self._jobs = None
         self._job_runner = None
+        self._idempotency = None
+        self._idempotency_maintenance = None
         if transaction is not None:
             _ = await transaction.__aexit__(exc_type, exc, traceback)
 
@@ -75,6 +85,16 @@ class PostgresUnitOfWork:
     def job_runner(self) -> PostgresJobRunner:
         """Return the unscoped job runner on the open session."""
         return _opened(self._job_runner)
+
+    @property
+    def idempotency(self) -> PostgresIdempotencyRepository:
+        """Return the pilot-scoped idempotency-key repository on the open session."""
+        return _opened(self._idempotency)
+
+    @property
+    def idempotency_maintenance(self) -> PostgresIdempotencyMaintenance:
+        """Return the unscoped idempotency maintenance repository on the session."""
+        return _opened(self._idempotency_maintenance)
 
 
 def _opened[T](part: T | None) -> T:
