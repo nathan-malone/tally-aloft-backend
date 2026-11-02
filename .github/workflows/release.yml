@@ -1,7 +1,8 @@
 # A pushed tag vX.Y.Z publishes the committed openapi.json as its release's
 # asset, which the clients sync from. The verify job reads the repository and
-# checks the file is current; only the publish job can write, and it runs no
-# project code: it never checks out the repository.
+# checks the file is current and breaks no supported release's schema. Only
+# the publish job can write, and it runs no project code: it never checks out
+# the repository.
 name: Release
 
 # Only vX.Y.Z tags, the form supported-schema-releases.txt accepts; GitHub's
@@ -36,6 +37,14 @@ jobs:
     # uv installs the locked environment itself, so no other setup is needed.
     - name: Check the API schema is current
       run: make openapi.check
+    # A tag can point at a commit that never passed the pull-request checks,
+    # so nothing is published that breaks a supported release's schema. It
+    # fetches those schemas with the read-only token.
+    - name: Check the API schema for breaking changes
+      run: make openapi.breaking.check
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: openapi

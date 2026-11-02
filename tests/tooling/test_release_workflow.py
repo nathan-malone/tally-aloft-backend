@@ -94,10 +94,15 @@ def test_publish_attaches_the_schema_to_a_new_or_existing_release() -> None:
 def test_verify_checks_the_schema_before_uploading_it() -> None:
     verify = _jobs()["verify"]
 
-    assert run_commands(verify) == ["make openapi.check"]
-    check = verify.index("run: make openapi.check")
+    # A tag can point at a commit that never passed the pull-request checks,
+    # so the release checks for breaking changes itself before publishing.
+    assert run_commands(verify) == ["make openapi.check", "make openapi.breaking.check"]
+    breaking = verify.index("run: make openapi.breaking.check")
     upload = verify.index(UPLOAD)
-    assert check < upload
+    assert breaking < upload
+    step = verify[breaking:upload]
+    assert "GH_TOKEN: ${{ github.token }}" in step
+    assert "GH_REPO: ${{ github.repository }}" in step
     assert "path: openapi.json" in verify[upload:]
     assert "if-no-files-found: error" in verify[upload:]
 

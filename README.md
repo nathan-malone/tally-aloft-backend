@@ -130,13 +130,17 @@ Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS=
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema, then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
+Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema and breaks no [supported schema release](#supported-schema-releases), then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
 
-A stale `openapi.json` fails the workflow before anything is published. Run `make openapi.fix` on `main`, merge the change, and tag the new commit.
+A failed check stops the workflow before anything is published. Fix it on `main`, then tag the new commit:
+
+- **Stale `openapi.json`:** run `make openapi.fix` and merge the change.
+- **A breaking change:** undo it in the code. Remove a tag from the list only as [Supported schema releases](#supported-schema-releases) allows.
+- **A listed tag without an asset:** see the last point of [Supported schema releases](#supported-schema-releases).
 
 ### Supported schema releases
 
-`supported-schema-releases.txt` lists, one per line, the backend tags whose `openapi.json` a supported client release was built against. `#` starts a comment. On every pull request, `make openapi.breaking.check` downloads each listed tag's `openapi.json` release asset and fails if the current `openapi.json` breaks it, as the [client contract](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/client-contract.md) defines a breaking change. An empty list passes.
+`supported-schema-releases.txt` lists, one per line, the backend tags whose `openapi.json` a supported client release was built against. `#` starts a comment. On every pull request, and in the release workflow before it publishes, `make openapi.breaking.check` downloads each listed tag's `openapi.json` release asset and fails if the current `openapi.json` breaks it, as the [client contract](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/client-contract.md) defines a breaking change. It reads the list in the commit being checked, so a release is checked against the list in its tagged commit. An empty list passes.
 
 - **Add a tag** when a client release built against that tag's schema ships.
 - **Remove a tag** only when no supported client release uses it, in a pull request of its own that names the client release that dropped support. Never remove one to get a breaking change through.
