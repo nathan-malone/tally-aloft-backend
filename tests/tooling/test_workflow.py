@@ -3,25 +3,19 @@ import re
 import pytest
 
 from tests.support.makefile import targets
-from tests.support.paths import ROOT
+from tests.support.workflows import PINNED, actions, read_workflow, run_commands
 
-WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-USES = re.compile(r"^\s*-?\s*uses:\s*(?P<action>.+?)\s*$", re.MULTILINE)
-# A full commit SHA, which can't be moved as a tag can, then its exact release,
-# such as `# v7.0.1`, never a major tag such as v7.
-PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
-RUN = re.compile(r"^\s*run:\s*(?P<command>.+)$", re.MULTILINE)
 # CI runs everything `make check` does, so adding a check to the Makefile
 # without a CI step fails here. What each target runs is in test_makefile.py.
 TARGETS = ["packages.install", "image.build", *targets()["check"]]
 
 
 def _workflow() -> str:
-    return WORKFLOW.read_text()
+    return read_workflow("ci.yml")
 
 
 def _commands() -> list[str]:
-    return [match.group("command") for match in RUN.finditer(_workflow())]
+    return run_commands(_workflow())
 
 
 def test_runs_on_pull_requests_only() -> None:
@@ -44,10 +38,10 @@ def test_token_can_only_read_contents() -> None:
 
 
 def test_every_action_is_pinned_to_a_commit_and_its_release() -> None:
-    actions = [match.group("action") for match in USES.finditer(_workflow())]
+    used = actions(_workflow())
 
-    assert actions != []
-    assert [action for action in actions if PINNED.match(action) is None] == []
+    assert used != []
+    assert [action for action in used if PINNED.match(action) is None] == []
 
 
 def test_checkout_keeps_no_credentials() -> None:

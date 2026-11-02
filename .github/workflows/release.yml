@@ -1,0 +1,67 @@
+# A pushed tag vX.Y.Z publishes the committed openapi.json as its release's
+# asset, which the clients sync from. The verify job reads the repository and
+# checks the file is current; only the publish job can write, and it runs no
+# project code: it never checks out the repository.
+name: Release
+
+on:
+  push:
+    tags:
+    - "v*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Every uv command asserts that uv.lock is current and never rewrites it.
+  UV_LOCKED: "1"
+
+jobs:
+  verify:
+    name: Verify the API schema
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+    # uv installs the locked environment itself, so no other setup is needed.
+    - name: Check the API schema is current
+      run: make openapi.check
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: openapi
+        path: openapi.json
+        if-no-files-found: error
+        retention-days: 1
+
+  publish:
+    name: Publish the API schema
+    needs: verify
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    # The tag reaches the shell only through the environment, never through an
+    # expression in a command. gh needs GH_REPO, because there is no checkout.
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: openapi
+    # If view fails for any reason but a missing release, create fails too, so
+    # no failure is swallowed.
+    - name: Create the release
+      run: gh release view "$TAG" || gh release create "$TAG" --verify-tag --title "$TAG" --notes "API schema for $TAG."
+    # --clobber makes a re-run upload the schema this run just verified.
+    - name: Attach openapi.json
+      run: gh release upload "$TAG" openapi.json --clobber

@@ -128,6 +128,12 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
 
 Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS="-n0"` runs them in one process, which `--pdb` needs, and `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` caps the worker count.
 
+## Releases
+
+Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema, then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
+
+A stale `openapi.json` fails the workflow before anything is published. Run `make openapi.fix` on `main`, merge the change, and tag the new commit.
+
 ## Settings
 
 The processes read environment variables only, all prefixed `TALLY_`, and ignore unknown ones. Durations are integer seconds, lists are comma-separated, and maps are JSON. A missing or invalid variable stops the process before it serves, with one line that names the variable and its error type.
