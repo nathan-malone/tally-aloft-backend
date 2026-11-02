@@ -1,4 +1,4 @@
-# Every pull request runs the eight checks on native ARM64, the architecture the
+# Every pull request runs the checks on native ARM64, the architecture the
 # image ships for. A failing step fails the run. Each step calls a Makefile
 # target, so the commands live in the Makefile only.
 name: CI
@@ -49,6 +49,12 @@ jobs:
       run: make slop.check
     - name: Check the API schema is current
       run: make openapi.check
+    # Fetches each supported release's schema with the read-only token.
+    - name: Check the API schema for breaking changes
+      run: make openapi.breaking.check
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
 
   test:
     name: Build & unit tests

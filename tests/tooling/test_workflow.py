@@ -3,25 +3,19 @@ import re
 import pytest
 
 from tests.support.makefile import targets
-from tests.support.paths import ROOT
+from tests.support.workflows import read_workflow, run_commands
 
-WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-USES = re.compile(r"^\s*-?\s*uses:\s*(?P<action>.+?)\s*$", re.MULTILINE)
-# A full commit SHA, which can't be moved as a tag can, then its exact release,
-# such as `# v7.0.1`, never a major tag such as v7.
-PINNED = re.compile(r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
-RUN = re.compile(r"^\s*run:\s*(?P<command>.+)$", re.MULTILINE)
 # CI runs everything `make check` does, so adding a check to the Makefile
 # without a CI step fails here. What each target runs is in test_makefile.py.
 TARGETS = ["packages.install", "image.build", *targets()["check"]]
 
 
 def _workflow() -> str:
-    return WORKFLOW.read_text()
+    return read_workflow("ci.yml")
 
 
 def _commands() -> list[str]:
-    return [match.group("command") for match in RUN.finditer(_workflow())]
+    return run_commands(_workflow())
 
 
 def test_runs_on_pull_requests_only() -> None:
@@ -43,21 +37,6 @@ def test_token_can_only_read_contents() -> None:
     assert re.search(r":\s*write\b", workflow) is None
 
 
-def test_every_action_is_pinned_to_a_commit_and_its_release() -> None:
-    actions = [match.group("action") for match in USES.finditer(_workflow())]
-
-    assert actions != []
-    assert [action for action in actions if PINNED.match(action) is None] == []
-
-
-def test_checkout_keeps_no_credentials() -> None:
-    workflow = _workflow()
-
-    assert workflow.count("actions/checkout@") == workflow.count(
-        "persist-credentials: false"
-    )
-
-
 @pytest.mark.parametrize("target", TARGETS)
 def test_runs_every_target(target: str) -> None:
     assert any(command.split()[:2] == ["make", target] for command in _commands())
@@ -77,17 +56,12 @@ def test_builds_the_image_for_arm64() -> None:
     assert all("PLATFORM=linux/arm64" in build.split() for build in builds)
 
 
-def test_no_check_is_allowed_to_fail() -> None:
+def test_the_breaking_change_check_gets_the_read_only_token() -> None:
     workflow = _workflow()
+    start = workflow.index("run: make openapi.breaking.check")
+    # The step ends at the next step or the end of its job.
+    ends = [workflow.find(end, start) for end in ("\n    - ", "\n\n")]
+    step = workflow[start : min(end for end in ends if end != -1)]
 
-    assert "continue-on-error" not in workflow
-    assert "|| true" not in workflow
-    assert re.search(r"^\s+if:", workflow, re.MULTILINE) is None
-
-
-def test_every_uv_command_asserts_the_lock() -> None:
-    locked = re.search(
-        r'^env:\n(?:\s+#.*\n)*\s+UV_LOCKED: "1"\s*$', _workflow(), re.MULTILINE
-    )
-
-    assert locked is not None
+    assert "GH_TOKEN: ${{ github.token }}" in step
+    assert "GH_REPO: ${{ github.repository }}" in step

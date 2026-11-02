@@ -20,7 +20,7 @@ The `Makefile` holds every developer and CI command. Run `make` on its own to li
 | `make packages.install` | Install the locked dependencies |
 | `make lint.fix` | Apply the linter's safe fixes and format the code |
 | `make check` | Every check and the full test suite, as CI runs them |
-| `make check.fast` | The same, without the tests that need Docker |
+| `make check.fast` | The same, without the breaking-change check and the tests that need Docker |
 | `make test ARGS="-k settings -x"` | Run tests, passing extra arguments to the test runner |
 | `make openapi.fix` | Write `openapi.json` from the API's schema, after changing a route |
 | `make datastores.up` | Start the local data stores in containers and wait until they're healthy |
@@ -122,11 +122,26 @@ Alembic runs the migrations in `migrations/`, as the owner role, `tally_aloft_ow
 
 ## Checks
 
-`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema) and `make test` (tests).
+`make check` must pass before a commit, and CI runs the same targets on each pull request. It runs, in order, `make lint.check` (linting and formatting), `make types.check` (types), `make boundaries.check` (module boundaries), `make slop.check` (patterns AI coding agents leave behind), `make openapi.check` (whether `openapi.json` matches the API's schema), `make openapi.breaking.check` (whether `openapi.json` breaks a supported release's schema; see [Supported schema releases](#supported-schema-releases)) and `make test` (tests).
 
-`make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop.
+`make test` builds and runs the image for the tests marked `container`, so Docker must be running. `make check.fast` and `make test.fast` skip those tests for a quick loop, and `make check.fast` also skips the breaking-change check, which needs Docker and `gh` once a release is listed.
 
 Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS="-n0"` runs them in one process, which `--pdb` needs, and `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` caps the worker count.
+
+## Releases
+
+Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema, then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
+
+A stale `openapi.json` fails the workflow before anything is published. Run `make openapi.fix` on `main`, merge the change, and tag the new commit.
+
+### Supported schema releases
+
+`supported-schema-releases.txt` lists, one per line, the backend tags whose `openapi.json` a supported client release was built against. `#` starts a comment. On every pull request, `make openapi.breaking.check` downloads each listed tag's `openapi.json` release asset and fails if the current `openapi.json` breaks it, as the [client contract](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/client-contract.md) defines a breaking change. An empty list passes.
+
+- **Add a tag** when a client release built against that tag's schema ships.
+- **Remove a tag** only when no supported client release uses it, in a pull request of its own that names the client release that dropped support. Never remove one to get a breaking change through.
+- **Locally**, with a tag listed, the check needs Docker running and the GitHub CLI signed in (`gh auth login`).
+- **A tag without an asset** fails the check, naming the tag. If that tag's release workflow failed, fix the cause and re-run it from the Actions tab. If the tag predates the release workflow, remove it: no client could have synced from it.
 
 ## Settings
 
@@ -137,6 +152,7 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production`. The migration command reads it too. | none | yes |
 | `TALLY_FORWARDED_ALLOW_IPS` | Comma-separated addresses or CIDR networks of the proxies whose `X-Forwarded-*` headers are trusted. `*` and catch-all networks such as `0.0.0.0/0` are rejected, and an empty value trusts none. | `127.0.0.1` | no |
 | `TALLY_CORS_ORIGINS` | Comma-separated browser origins that CORS allows, such as `https://tallyaloft.app`. Each is exactly a lowercase `scheme://host[:port]`, with no path and no default port. `*` is rejected. | none | no |
+| `TALLY_MIN_CLIENT_VERSIONS` | The lowest app version each platform still supports, as a JSON object from `web`, `ios` or `android` to `MAJOR.MINOR.PATCH`, such as `{"ios": "1.4.0"}`. A request from an older app gets `400 client_version_unsupported`; a platform without an entry, a request without the `X-Client-Platform` and `X-Client-Version` headers, and a version that doesn't parse all pass. An empty value means no minimums. | none | no |
 | `TALLY_DATABASE_URL` | The application role's database, as a SQLAlchemy URL for asyncpg: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters in the user and password percent-encoded. In `staging` and `production` it must end in `?ssl=verify-full`, with no `host` parameter, and `PGSSLROOTCERT` names the server's CA bundle. Secret. | none | yes |
 | `TALLY_DATABASE_POOL_SIZE` | Connections each process keeps in its pool, at least 1. | `5` | no |
 | `TALLY_DATABASE_MAX_OVERFLOW` | Extra connections a process may open when its pool is busy, at least 0. A process opens at most pool size plus overflow. | `5` | no |

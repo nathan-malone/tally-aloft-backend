@@ -15,6 +15,10 @@ from tests.support.worker_command import (
 # (tally-aloft-docs/technical/make-commands.md, "Rules").
 SHELL_SYNTAX = re.compile(r"[|&;<>'`*^%]|\$\$")
 AGGREGATES = [("check", "test"), ("check.fast", "test.fast")]
+# Checks that need Docker or the network, which check.fast leaves out: once a
+# tag is listed, the breaking-change check pulls oasdiff's image and fetches
+# release assets with gh.
+FAST_EXCLUDED = {"check.fast": {"openapi.breaking.check"}}
 
 
 def _makefile() -> str:
@@ -70,7 +74,7 @@ def test_aggregates_run_every_check_then_their_tests(
     *checks, last = targets()[aggregate]
     every_check = {target for target in targets() if target.endswith(".check")}
 
-    assert set(checks) == every_check
+    assert set(checks) == every_check - FAST_EXCLUDED.get(aggregate, set())
     assert last == tests
 
 
