@@ -59,21 +59,36 @@ def test_publish_runs_after_verify_and_no_project_code() -> None:
     assert re.search(r"^    needs: verify$", publish, re.MULTILINE) is not None
     assert [action.split("@")[0] + "@" for action in actions(publish)] == [DOWNLOAD]
     commands = run_commands(publish)
-    assert commands != []
-    assert all(command.startswith("gh release ") for command in commands)
-    assert all(
-        tool not in command.split()
+    # Each command, split at the shell's if, then, else, fi, ;, &&, || and |.
+    calls = [
+        call
         for command in commands
-        for tool in ("make", "uv", "python")
+        for call in re.split(r"^if |\s*(?:;\s*(?:then|else|fi)?|&&|\|\|?)\s*", command)
+        if call != ""
+    ]
+    assert commands != []
+    assert [call for call in calls if not call.startswith("gh release ")] == []
+
+
+def test_publish_attaches_the_schema_to_a_new_or_existing_release() -> None:
+    [publish] = run_commands(_jobs()["publish"])
+    condition, existing, new = re.split(
+        r"; then |; else ", publish.removesuffix("; fi")
     )
 
-
-def test_publish_creates_the_release_then_attaches_the_schema() -> None:
-    create, upload = run_commands(_jobs()["publish"])
-
-    assert create.startswith('gh release view "$TAG" || gh release create "$TAG"')
-    assert "--verify-tag" in create.split()
-    assert upload == 'gh release upload "$TAG" openapi.json --clobber'
+    assert condition == 'if gh release view "$TAG" > /dev/null'
+    # An existing release, from a re-run, has its asset replaced, and a draft
+    # an interrupted create left behind is published.
+    assert existing == (
+        'gh release upload "$TAG" openapi.json --clobber'
+        ' && gh release edit "$TAG" --draft=false'
+    )
+    # A new release gets the asset as it is created, so it is never published
+    # without one: gh creates it as a draft, uploads, then publishes.
+    assert new == (
+        'gh release create "$TAG" openapi.json --verify-tag --title "$TAG"'
+        ' --notes "API schema for $TAG."'
+    )
 
 
 def test_verify_checks_the_schema_before_uploading_it() -> None:

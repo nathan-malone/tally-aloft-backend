@@ -60,10 +60,13 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: openapi
-    # If view fails for any reason but a missing release, create fails too, so
-    # no failure is swallowed.
-    - name: Create the release
-      run: gh release view "$TAG" || gh release create "$TAG" --verify-tag --title "$TAG" --notes "API schema for $TAG."
-    # --clobber makes a re-run upload the schema this run just verified.
-    - name: Attach openapi.json
-      run: gh release upload "$TAG" openapi.json --clobber
+    # A new release gets the asset as it is created: gh creates a draft, uploads,
+    # then publishes, so the release is never public without openapi.json. On a
+    # re-run the release exists, and --clobber deletes and re-uploads the asset,
+    # which is missing in between; a failed upload is fixed by re-running this
+    # job. view also finds a draft that an interrupted create left behind, so
+    # that branch then publishes it; on a published release that changes
+    # nothing. If view fails for any reason but a missing release, create fails
+    # too, so no failure is swallowed.
+    - name: Publish openapi.json
+      run: if gh release view "$TAG" > /dev/null; then gh release upload "$TAG" openapi.json --clobber && gh release edit "$TAG" --draft=false; else gh release create "$TAG" openapi.json --verify-tag --title "$TAG" --notes "API schema for $TAG."; fi
