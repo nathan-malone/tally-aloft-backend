@@ -8,7 +8,11 @@ from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from tally_aloft.adapters.inbound.http import health
-from tally_aloft.adapters.inbound.http.client_version import ClientVersionMiddleware
+from tally_aloft.adapters.inbound.http.client_version import (
+    PLATFORM_HEADER,
+    VERSION_HEADER,
+    ClientVersionMiddleware,
+)
 from tally_aloft.adapters.inbound.http.errors import (
     ERROR_STATUSES,
     ErrorBody,
@@ -38,8 +42,8 @@ _CORS_HEADERS = (
     "Authorization",
     "Content-Type",
     "Idempotency-Key",
-    "X-Client-Platform",
-    "X-Client-Version",
+    PLATFORM_HEADER,
+    VERSION_HEADER,
     "traceparent",
     "tracestate",
     "sentry-trace",

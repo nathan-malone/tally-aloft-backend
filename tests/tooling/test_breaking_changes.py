@@ -23,11 +23,16 @@ from tests.support.paths import ROOT
 PINNED_IMAGE = re.compile(r"^[\w./-]+:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$")
 
 
-def _schema(operations: dict[str, str], fields: tuple[str, ...] = ()) -> bytes:
+def _schema(
+    operations: dict[str, str],
+    fields: tuple[str, ...] = (),
+    deprecated: tuple[str, ...] = (),
+) -> bytes:
     """
     Return a schema with one GET per path, each answering an object.
 
     The object has a required `id` and an optional string for each of `fields`.
+    The operations on the `deprecated` paths are marked deprecated.
     """
     properties = {"id": {"type": "string"}} | {
         name: {"type": "string"} for name in fields
@@ -45,7 +50,13 @@ def _schema(operations: dict[str, str], fields: tuple[str, ...] = ()) -> bytes:
         },
     }
     paths = {
-        path: {"get": {"operationId": operation_id, "responses": {"200": response}}}
+        path: {
+            "get": {
+                "operationId": operation_id,
+                "deprecated": path in deprecated,
+                "responses": {"200": response},
+            }
+        }
         for path, operation_id in operations.items()
     }
     document = {
@@ -76,12 +87,20 @@ def _gh_on_path(_name: str) -> str:
     return "/usr/bin/gh"
 
 
+def _docker_on_path(_name: str) -> str:
+    return "/usr/bin/docker"
+
+
 def _nothing_on_path(_name: str) -> None:
     return None
 
 
 def _unused_fetch(tag: str) -> NoReturn:
     pytest.fail(f"fetched {tag}")
+
+
+def _compatible(_base: bytes, _current: Path) -> int:
+    return 0
 
 
 def _unused_compare(_base: bytes, _current: Path) -> NoReturn:
@@ -127,28 +146,36 @@ def test_a_missing_asset_fails_naming_the_tag(
     assert "Supported schema releases" in err
 
 
-@pytest.mark.parametrize(
-    ("compared", "code", "reported"),
-    [(0, 0, ""), (1, 1, "breaking changes"), (102, 1, "exit code 102")],
-)
-def test_each_oasdiff_exit_code_is_reported(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    compared: int,
-    code: int,
-    reported: str,
+def test_a_compatible_release_passes_silently(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     releases = _releases(tmp_path, "v0.1.0\n")
 
-    result = check(
-        releases, _current(tmp_path, b"{}"), lambda _tag: b"{}", lambda *_: compared
-    )
+    code = check(releases, _current(tmp_path, b"{}"), lambda _tag: b"{}", _compatible)
 
-    assert result == code
-    err = capsys.readouterr().err
-    assert (reported == "") == (err == "")
-    assert reported in err
-    assert reported == "" or "v0.1.0" in err
+    assert code == 0
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("compared", "reported"),
+    [
+        (1, "v0.1.0: breaking changes"),
+        (102, "v0.1.0: oasdiff failed with exit code 102"),
+    ],
+)
+def test_an_oasdiff_failure_is_reported_with_the_tag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], compared: int, reported: str
+) -> None:
+    releases = _releases(tmp_path, "v0.1.0\n")
+
+    def compare(_base: bytes, _current: Path) -> int:
+        return compared
+
+    code = check(releases, _current(tmp_path, b"{}"), lambda _tag: b"{}", compare)
+
+    assert code == 1
+    assert reported in capsys.readouterr().err
 
 
 def test_every_tag_is_checked_before_failing(
@@ -231,6 +258,50 @@ def test_oasdiff_needs_docker(
     assert "Docker" in capsys.readouterr().err
 
 
+def test_oasdiff_runs_isolated_with_the_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    levels: list[str] = []
+
+    def run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        calls.append(command)
+        mount = command[command.index("--volume") + 1]
+        directory = mount.removesuffix(":/specs:ro")
+        levels.append((Path(directory) / "levels.txt").read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(shutil, "which", _docker_on_path)
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert run_oasdiff(b"{}", _current(tmp_path, b"{}")) == 0
+    [command] = calls
+    assert command[:6] == [
+        "/usr/bin/docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--volume",
+    ]
+    assert command[6].endswith(":/specs:ro")
+    assert command[7:] == [
+        OASDIFF_IMAGE,
+        "breaking",
+        "/specs/base.json",
+        "/specs/current.json",
+        "--fail-on",
+        "WARN",
+        "--severity-levels",
+        "/specs/levels.txt",
+        "--allow-external-refs=false",
+        "--color",
+        "never",
+    ]
+    assert levels == ["".join(f"{rule} err\n" for rule in script.SEVERITY_OVERRIDES)]
+
+
 def test_main_passes_on_a_list_of_comments(tmp_path: Path) -> None:
     releases = _releases(tmp_path, "# Nothing supported yet.\n")
     current = _current(tmp_path, b"{}")
@@ -250,10 +321,15 @@ def test_the_oasdiff_image_is_pinned_to_a_release_and_digest() -> None:
 @pytest.mark.parametrize(
     ("base", "current", "code"),
     [
-        (_schema(BOTH), _schema(FLIGHTS), 1),
+        (_schema(BOTH), _schema(FLIGHTS), script.BREAKING),
         (_schema(FLIGHTS), _schema(FLIGHTS, ("note",)), 0),
-        (_schema(FLIGHTS), _schema({"/flights": "logbook_get_flights"}), 1),
-        (_schema(FLIGHTS, ("note",)), _schema(FLIGHTS), 1),
+        (
+            _schema(FLIGHTS),
+            _schema({"/flights": "logbook_get_flights"}),
+            script.BREAKING,
+        ),
+        (_schema(FLIGHTS, ("note",)), _schema(FLIGHTS), script.BREAKING),
+        (_schema(BOTH, deprecated=("/aircraft",)), _schema(FLIGHTS), script.BREAKING),
         (_schema(FLIGHTS), _schema(FLIGHTS), 0),
     ],
     ids=[
@@ -261,14 +337,11 @@ def test_the_oasdiff_image_is_pinned_to_a_release_and_digest() -> None:
         "added-optional-field",
         "renamed-operation-id",
         "removed-optional-field",
+        "removed-deprecated-operation",
         "unchanged",
     ],
 )
 def test_oasdiff_judges_each_change(
     tmp_path: Path, base: bytes, current: bytes, code: int
 ) -> None:
-    releases = _releases(tmp_path, "v0.1.0\n")
-
-    result = check(releases, _current(tmp_path, current), lambda _tag: base)
-
-    assert result == code
+    assert run_oasdiff(base, _current(tmp_path, current)) == code

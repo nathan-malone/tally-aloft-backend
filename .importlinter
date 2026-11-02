@@ -68,3 +68,17 @@ forbidden_modules =
     taskiq
     taskiq_redis
     uvicorn
+
+# Settings types the client minimums with this module, so it must stay
+# standard-library only: anything else would load in the worker and scheduler.
+[importlinter:contract:version-policy-stdlib]
+name = The client-version policy imports only the standard library
+type = forbidden
+source_modules =
+    tally_aloft.adapters.inbound.http.version_policy
+forbidden_modules =
+    fastapi
+    pydantic
+    starlette
+    tally_aloft.adapters.inbound.http.client_version
+    tally_aloft.adapters.inbound.http.errors

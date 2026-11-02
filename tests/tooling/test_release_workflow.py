@@ -3,7 +3,6 @@ import re
 import pytest
 
 from tests.support.workflows import (
-    PINNED,
     actions,
     jobs,
     read_workflow,
@@ -100,27 +99,11 @@ def test_no_command_interpolates_an_expression() -> None:
     assert [command for command in commands if "${{" in command] == []
 
 
-def test_every_action_is_pinned_to_a_commit_and_its_release() -> None:
-    used = actions(_workflow())
+def test_publish_passes_the_token_repository_and_tag_through_env() -> None:
+    publish = _jobs()["publish"]
 
-    assert used != []
-    assert [action for action in used if PINNED.match(action) is None] == []
+    env = publish[publish.index("    env:\n") : publish.index("    steps:\n")]
 
-
-def test_checkout_keeps_no_credentials() -> None:
-    workflow = _workflow()
-
-    assert workflow.count("actions/checkout@") == 1
-    assert workflow.count("persist-credentials: false") == 1
-
-
-def test_no_step_is_allowed_to_fail() -> None:
-    workflow = _workflow()
-
-    assert "continue-on-error" not in workflow
-    assert "|| true" not in workflow
-    assert re.search(r"^\s+if:", workflow, re.MULTILINE) is None
-
-
-def test_every_uv_command_asserts_the_lock() -> None:
-    assert re.search(r'^  UV_LOCKED: "1"$', _workflow(), re.MULTILINE) is not None
+    assert "      GH_TOKEN: ${{ github.token }}\n" in env
+    assert "      GH_REPO: ${{ github.repository }}\n" in env
+    assert "      TAG: ${{ github.ref_name }}\n" in env

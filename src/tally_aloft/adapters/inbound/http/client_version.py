@@ -67,7 +67,12 @@ class ClientVersionMiddleware:
         await self.app(scope, receive, send)
 
     def _unmet_minimum(self, headers: Headers) -> tuple[str, ClientVersion] | None:
-        """Return the platform and minimum a request's app is below, if it is."""
+        """
+        Return the platform and minimum a request's app is below, if it is.
+
+        A version that doesn't parse isn't below anything; it is logged as a
+        warning instead, so a broken app build shows up in the logs.
+        """
         platform = headers.get(PLATFORM_HEADER)
         version = headers.get(VERSION_HEADER)
         if platform is None or version is None:

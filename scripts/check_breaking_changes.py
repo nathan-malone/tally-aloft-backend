@@ -145,11 +145,12 @@ def check(
     except ReleaseListError as error:
         _report(str(error))
         return 1
-    failed = [tag for tag in tags if not _passes(tag, current, fetch, compare)]
-    return 1 if len(failed) > 0 else 0
+    # Every tag is checked, so one run reports every release it breaks.
+    compatible = [_check_release(tag, current, fetch, compare) for tag in tags]
+    return 0 if all(compatible) else 1
 
 
-def _passes(tag: str, current: Path, fetch: Fetch, compare: Compare) -> bool:
+def _check_release(tag: str, current: Path, fetch: Fetch, compare: Compare) -> bool:
     """Report on one release, returning whether `current` is compatible with it."""
     base = fetch(tag)
     if base is None:

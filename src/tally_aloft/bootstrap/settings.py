@@ -4,7 +4,6 @@ import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
-from types import MappingProxyType
 from typing import Annotated, override
 
 from pydantic import (
@@ -40,7 +39,6 @@ _PARSE_ERROR_FIELD = re.compile(r'field "(?P<field>\w+)"')
 
 
 _TRUSTS_EVERYONE = "would trust every address; list the proxies' networks"
-_NO_MINIMUMS: Mapping[ClientPlatform, ClientVersion] = MappingProxyType({})
 _NOT_A_VERSION = "must be a MAJOR.MINOR.PATCH string, such as 1.4.0"
 
 # For profiles and tests that never connect. Port 9 on localhost refuses
@@ -182,7 +180,7 @@ class Settings(BaseSettings):
         """
         if isinstance(value, str):
             if value.strip() == "":
-                return _NO_MINIMUMS
+                return dict[ClientPlatform, ClientVersion]()
             value = json.loads(value)
         versions = _mapping(value)
         if versions is None:
@@ -313,7 +311,11 @@ def _list_parts(value: object) -> Sequence[object] | None:
 
 
 def _mapping(value: object) -> Mapping[object, object] | None:
-    """Return a map setting's value as a mapping, or `None` if it isn't one."""
+    """
+    Return a map setting's value as a mapping, or `None` if it isn't one.
+
+    It narrows `object` for the type checker, as `_list_parts` does for lists.
+    """
     if isinstance(value, Mapping):
         return value
     return None
