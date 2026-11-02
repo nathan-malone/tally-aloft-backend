@@ -84,14 +84,15 @@ jobs:
         name: openapi
     # A new release gets the asset as it is created: gh creates a draft, uploads,
     # then publishes, so the release is never public without openapi.json. An
-    # existing release gets the asset only if it has none, such as after a
-    # failed upload: without --clobber gh refuses to replace one, so a moved
-    # tag can't change the schema its clients were built against, and a re-run
-    # of a successful publish fails. view also finds a draft that an
-    # interrupted create left behind; if it has no asset, that branch uploads
-    # one and publishes it, and on a published release the edit changes
-    # nothing. A draft that already has the asset fails the upload and needs
-    # publishing by hand (see the README). If view fails for any reason but a
-    # missing release, create fails too, so no failure is swallowed.
+    # existing release gets the asset only if it has none: without --clobber
+    # gh refuses to replace one, so a moved tag can't change the schema its
+    # clients were built against, and a re-run of a successful publish fails.
+    # view also finds a draft that an interrupted create left behind; if it
+    # has no asset, that branch uploads one and publishes it, and on a
+    # published release the edit changes nothing. A release that already has
+    # the asset fails the upload, even when it is only the empty "starter"
+    # asset a failed upload can leave, and needs the README's recovery. If
+    # view fails for any reason but a missing release, create fails too, so no
+    # failure is swallowed.
     - name: Publish openapi.json
       run: if gh release view "$TAG" > /dev/null; then gh release upload "$TAG" openapi.json && gh release edit "$TAG" --draft=false; else gh release create "$TAG" openapi.json --verify-tag --title "$TAG" --notes "API schema for $TAG."; fi

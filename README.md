@@ -130,7 +130,11 @@ Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS=
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema and breaks no [supported schema release](#supported-schema-releases), then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how. A published `openapi.json` is never replaced, so moving a tag can't change it and re-running a successful release fails; a changed schema needs a new tag. A release whose asset is missing, such as after a failed upload, gets it on a re-run. If a re-run fails because a draft release already has its asset (the run was cancelled or timed out while publishing), check the draft's `openapi.json` and publish it with `gh release edit <tag> --draft=false`.
+Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema and breaks no [supported schema release](#supported-schema-releases), then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how. A published `openapi.json` is never replaced, so moving a tag can't change it and re-running a successful release fails; a changed schema needs a new tag. A release with no `openapi.json` asset gets it on a re-run. If a re-run fails because the asset already exists, run `gh release view <tag> --json isDraft,assets` and check the asset's `state`:
+
+- **`starter`:** an upload failed or was interrupted and left an empty asset. Delete it with `gh release delete-asset <tag> openapi.json --yes`, then re-run the workflow. Don't publish a draft while it has a `starter` asset.
+- **`uploaded`, on a draft:** the run stopped before publishing. Check the draft's `openapi.json`, then publish it with `gh release edit <tag> --draft=false`.
+- **`uploaded`, published:** the release already has its schema, so there is nothing to recover. A changed schema needs a new tag.
 
 A failed check stops the workflow before anything is published. Fix it on `main`, then tag the new commit:
 
@@ -145,7 +149,7 @@ A failed check stops the workflow before anything is published. Fix it on `main`
 - **Add a tag** when a client release built against that tag's schema ships.
 - **Remove a tag** only when no supported client release uses it, in a pull request of its own that names the client release that dropped support. Never remove one to get a breaking change through.
 - **Locally**, with a tag listed, the check needs Docker running and the GitHub CLI signed in (`gh auth login`).
-- **A tag without an asset** fails the check, naming the tag. If that tag's release workflow failed, fix the cause and re-run it from the Actions tab. If the tag predates the release workflow, remove it: no client could have synced from it.
+- **A tag without an asset** fails the check, naming the tag. If that tag's release workflow failed, fix the cause and re-run it from the Actions tab; if the re-run fails because the asset already exists, see [Releases](#releases). If the tag predates the release workflow, remove it: no client could have synced from it.
 
 ## Settings
 
