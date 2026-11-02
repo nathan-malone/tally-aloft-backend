@@ -130,7 +130,7 @@ Tests run in parallel, one pytest-xdist worker per logical CPU. `make test ARGS=
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema and breaks no [supported schema release](#supported-schema-releases), then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how.
+Pushing a tag `vX.Y.Z` runs the release workflow (`.github/workflows/release.yml`). It checks that the committed `openapi.json` matches the API's schema and breaks no [supported schema release](#supported-schema-releases), then attaches it to the tag's GitHub release as the asset `openapi.json`, which the clients sync from. The image contract in the docs' [tech stack](https://github.com/nathan-malone/tally-aloft-docs/blob/main/technical/backend/tech-stack.md#operations) says which commits may be tagged, and how. A published `openapi.json` is never replaced, so moving a tag can't change it and re-running a successful release fails; a changed schema needs a new tag. A release whose asset is missing, such as after a failed upload, gets it on a re-run. If a re-run fails because a draft release already has its asset (the run was cancelled or timed out while publishing), check the draft's `openapi.json` and publish it with `gh release edit <tag> --draft=false`.
 
 A failed check stops the workflow before anything is published. Fix it on `main`, then tag the new commit:
 

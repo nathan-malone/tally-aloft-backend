@@ -80,12 +80,14 @@ def test_publish_attaches_the_schema_to_a_new_or_existing_release() -> None:
     )
 
     assert condition == 'if gh release view "$TAG" > /dev/null'
-    # An existing release, from a re-run, has its asset replaced, and a draft
-    # an interrupted create left behind is published.
+    # An existing release gets the asset only if it has none: gh refuses to
+    # replace one without --clobber, so a moved tag can't change the schema
+    # its clients were built against. A draft an interrupted create left
+    # behind is then published.
     assert existing == (
-        'gh release upload "$TAG" openapi.json --clobber'
-        ' && gh release edit "$TAG" --draft=false'
+        'gh release upload "$TAG" openapi.json && gh release edit "$TAG" --draft=false'
     )
+    assert "--clobber" not in publish
     # A new release gets the asset as it is created, so it is never published
     # without one: gh creates it as a draft, uploads, then publishes.
     assert new == (
