@@ -32,9 +32,11 @@ VALKEY_URL = "rediss://:cache-password@cache.example:6379/0"
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear every `TALLY_` variable, then set valid database and Valkey URLs."""
+    """Clear the `TALLY_` and forbidden variables, then set valid URLs."""
     for name in [name for name in os.environ if name.startswith("TALLY_")]:
         monkeypatch.delenv(name)
+    for name in FORBIDDEN_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TALLY_DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("TALLY_VALKEY_URL", VALKEY_URL)
 

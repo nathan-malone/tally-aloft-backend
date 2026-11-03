@@ -84,6 +84,8 @@ def test_a_task_span_continues_the_labels_trace(telemetry: Telemetry) -> None:
     assert trace.format_trace_id(span.context.trace_id) == (
         "4bf92f3577b34da6a3ce929d0e0e4736"
     )
+    assert span.parent is not None
+    assert trace.format_span_id(span.parent.span_id) == "00f067aa0ba902b7"
 
 
 def test_a_task_span_without_trace_context_starts_a_trace(

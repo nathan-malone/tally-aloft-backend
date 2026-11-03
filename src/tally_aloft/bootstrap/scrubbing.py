@@ -245,10 +245,39 @@ class TelemetryLogFilter(logging.Filter):
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001  # A bad format is the handler's to report.
+            # The handler prints the message and arguments when it reports it.
+            # Each is redacted on its own, keeping the argument count, so
+            # formatting still fails, unless the secret held the bad conversion.
+            if isinstance(record.msg, str):
+                record.msg = self._redactor.text(record.msg)
+            record.args = self._redact_arguments(record.args)
             return
         if self._redactor.holds_secret(message):
             record.msg = self._redactor.text(message)
             record.args = ()
+
+    def _redact_arguments(
+        self, arguments: tuple[object, ...] | Mapping[str, object] | None
+    ) -> tuple[object, ...] | Mapping[str, object] | None:
+        if arguments is None:
+            return None
+        if isinstance(arguments, Mapping):
+            return {
+                key: self._redact_argument(value) for key, value in arguments.items()
+            }
+        return tuple(self._redact_argument(value) for value in arguments)
+
+    def _redact_argument(self, value: object) -> object:
+        """Return `value`, or its redacted `repr` if that shows a secret."""
+        if isinstance(value, str):
+            return self._redactor.text(value)
+        try:
+            shown = repr(value)
+        except Exception:  # noqa: BLE001  # The filter must never raise.
+            return value
+        return (
+            self._redactor.text(shown) if self._redactor.holds_secret(shown) else value
+        )
 
     def _redact_exception(self, record: logging.LogRecord) -> None:
         text = record.exc_text

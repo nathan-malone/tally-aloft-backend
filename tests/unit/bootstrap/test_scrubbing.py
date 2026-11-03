@@ -224,3 +224,31 @@ def test_the_filter_keeps_a_record_whose_format_is_broken(
     log_record = record("%s %s %s", bad_args)
 
     assert TelemetryLogFilter(frozenset({HIDDEN})).filter(log_record)
+
+
+@pytest.mark.parametrize(
+    ("msg", "bad_args"),
+    [
+        (f"%s %s %s {HIDDEN}", ("one", f"x{HIDDEN}y")),
+        # Logging unwraps a lone mapping into the arguments.
+        ("%(a)s %(b)s", ({"a": HIDDEN},)),
+        ("%d", (HIDDEN,)),
+        ("%s %s", ([HIDDEN],)),
+    ],
+)
+def test_the_filter_redacts_a_record_whose_format_is_broken(
+    msg: str, bad_args: tuple[object, ...]
+) -> None:
+    log_filter = TelemetryLogFilter(frozenset({HIDDEN}))
+    log_record = record(msg, bad_args)
+
+    _ = log_filter.filter(log_record)
+    once = (log_record.msg, log_record.args)
+    _ = log_filter.filter(log_record)
+
+    # The handler reports the bad format with the message and arguments.
+    assert (log_record.msg, log_record.args) == once
+    assert HIDDEN not in repr(once)
+    assert REDACTED in repr(once)
+    with pytest.raises((TypeError, KeyError)):
+        _ = log_record.getMessage()

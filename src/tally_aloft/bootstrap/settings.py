@@ -361,7 +361,8 @@ def load_settings() -> Settings:
     On a missing or invalid variable, the process exits with one line that
     names each failing variable and its error type. The line is built from
     each error's location and type only, so no value, secret or not, appears.
-    A variable in `FORBIDDEN_VARIABLES` that is set stops it the same way.
+    A variable in `FORBIDDEN_VARIABLES` that is set and not empty stops it the
+    same way; an empty one is treated as unset.
     """
     forbidden = [
         (name, "forbidden")
