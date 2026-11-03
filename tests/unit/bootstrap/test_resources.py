@@ -2,6 +2,7 @@ import socket
 from typing import NoReturn
 
 import pytest
+from opentelemetry.instrumentation.redis import RedisInstrumentor
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 from taskiq_redis import RedisStreamBroker
@@ -64,6 +65,18 @@ async def test_disposes_the_engine_when_the_body_raises(
             raise RuntimeError(msg)
 
     assert len(disposed) == 1
+
+
+@pytest.mark.usefixtures("closed", "disposed")
+async def test_traces_only_the_cache_client() -> None:
+    async with open_resources(Settings.for_tests()) as resources:
+        traced: object = getattr(
+            resources.cache_client, "_is_instrumented_by_opentelemetry", False
+        )
+
+    assert traced is True
+    # Every client, the broker's included, would be traced by the global form.
+    assert not RedisInstrumentor().is_instrumented_by_opentelemetry
 
 
 async def test_closes_the_cache_client_on_exit(closed: list[Redis]) -> None:

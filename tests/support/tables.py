@@ -20,6 +20,16 @@ test_rows = Table(
     Column("value", Text, nullable=False),
 )
 
+# For the telemetry marker tests: a unique key and a required value, so a
+# statement can fail with a marker in Postgres's DETAIL.
+telemetry_rows = Table(
+    "telemetry_rows",
+    test_metadata,
+    Column("id", Uuid, primary_key=True, server_default=text("uuidv7()")),
+    Column("key", Text, nullable=False, unique=True),
+    Column("value", Text, nullable=False),
+)
+
 
 async def create_test_tables(owner_url: str) -> None:
     """Create every test-only table as the owner role."""

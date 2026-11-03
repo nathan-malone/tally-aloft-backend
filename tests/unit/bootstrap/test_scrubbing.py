@@ -35,6 +35,7 @@ from tally_aloft.bootstrap.scrubbing import (
 from tally_aloft.bootstrap.settings import Settings
 from tally_aloft.bootstrap.span_scrubbing import ScrubbingSpanExporter, scrub_span
 from tests.support.database_errors import MARKER, unique_violation
+from tests.support.telemetry import attributes_of
 
 if TYPE_CHECKING:
     from opentelemetry.util.types import Attributes
@@ -90,10 +91,6 @@ def span(
 
 def exception_event(**attributes: str | bool) -> Event:
     return Event("exception", attributes, timestamp=15)
-
-
-def attributes_of(item: ReadableSpan | Event | Link) -> dict[str, object]:
-    return {} if item.attributes is None else dict(item.attributes)
 
 
 def everything_in(scrubbed: ReadableSpan) -> str:

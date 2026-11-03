@@ -11,6 +11,7 @@ from tally_aloft.adapters.inbound.http.version_policy import (
     ClientVersion,
 )
 from tally_aloft.bootstrap.settings import (
+    FORBIDDEN_VARIABLES,
     Environment,
     MigrationSettings,
     Settings,
@@ -412,6 +413,29 @@ def test_load_settings_never_echoes_the_logfire_token(
         load_settings()
 
     assert "token-marker" not in _exit_message(error)
+
+
+@pytest.mark.parametrize("variable", FORBIDDEN_VARIABLES)
+def test_load_settings_refuses_a_variable_that_bypasses_scrubbing(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv(variable, "https://collector.example/marker-value")
+
+    with pytest.raises(SystemExit) as error:
+        load_settings()
+
+    assert _exit_message(error) == f"Invalid settings: {variable} (forbidden)"
+
+
+@pytest.mark.parametrize("variable", FORBIDDEN_VARIABLES)
+def test_load_settings_allows_an_empty_forbidden_variable(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv(variable, "")
+
+    assert load_settings().environment is Environment.DEVELOPMENT
 
 
 def test_sweep_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

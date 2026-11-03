@@ -22,6 +22,7 @@ from tally_aloft.bootstrap.scrubbing import (
     EXCEPTION_STACKTRACE,
     SCRUBBED_MARK,
     SQLSTATE_ATTRIBUTE,
+    VALIDATION_ERROR_KEYS,
     Redactor,
 )
 
@@ -72,7 +73,6 @@ _URL_KEYS = ("http.url", "url.full", "http.target")
 # Present on HTTP spans, whose message Logfire builds from the method and the
 # target, with the query values appended after ` ? `.
 _HTTP_KEYS = ("http.route", "http.target", "url.path")
-_VALIDATION_ERROR_KEYS = ("loc", "type")
 
 
 class ScrubbingSpanExporter(SpanExporter):
@@ -197,7 +197,7 @@ def _validation_errors(data: AttributeValue) -> list[dict[str, object]] | None:
         if isinstance(item, Mapping):
             error: Mapping[object, object] = item
             errors.append(
-                {key: error[key] for key in _VALIDATION_ERROR_KEYS if key in error}
+                {key: error[key] for key in VALIDATION_ERROR_KEYS if key in error}
             )
     return errors
 

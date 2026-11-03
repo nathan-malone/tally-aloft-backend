@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import os
 import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -46,6 +47,17 @@ _NOT_A_VERSION = "must be a MAJOR.MINOR.PATCH string, such as 1.4.0"
 # data stores.
 UNUSED_DATABASE_URL = "postgresql+asyncpg://unused@127.0.0.1:9/unused"
 UNUSED_VALKEY_URL = "redis://127.0.0.1:9/0"
+
+# Variables the services refuse to start with. Each of the first three makes
+# Logfire add an exporter of its own, which bypasses the scrubbing that every
+# exported span passes; the last makes Logfire's pydantic plugin record
+# validation inputs.
+FORBIDDEN_VARIABLES = (
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    "LOGFIRE_PYDANTIC_PLUGIN_RECORD",
+)
 
 
 class Environment(StrEnum):
@@ -349,7 +361,15 @@ def load_settings() -> Settings:
     On a missing or invalid variable, the process exits with one line that
     names each failing variable and its error type. The line is built from
     each error's location and type only, so no value, secret or not, appears.
+    A variable in `FORBIDDEN_VARIABLES` that is set stops it the same way.
     """
+    forbidden = [
+        (name, "forbidden")
+        for name in FORBIDDEN_VARIABLES
+        if os.environ.get(name, "") != ""
+    ]
+    if len(forbidden) > 0:
+        raise SystemExit(_describe(forbidden))
     return _load(Settings)
 
 

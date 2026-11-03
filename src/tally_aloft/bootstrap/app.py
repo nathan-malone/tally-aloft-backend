@@ -75,6 +75,16 @@ def create_app(settings: Settings, overrides: Overrides | None = None) -> FastAP
         title=_TITLE,
         lifespan=lifespan,
         middleware=_middleware(settings),
+        # Logfire's instrumentation is the only one. FastAPI's own would switch
+        # itself on whenever a tracer provider is set, and record exception
+        # messages and query strings.
+        telemetry={
+            "tracing": False,
+            "metrics": False,
+            "logs": False,
+            "operation_spans": False,
+            "auto_configure": False,
+        },
         generate_unique_id_function=operation_id,
         # Documenting every route's 422 with the shared body stops FastAPI
         # from adding its own `HTTPValidationError` schema.

@@ -42,6 +42,9 @@ CONSTRAINT_ATTRIBUTE = "db.constraint.name"
 EXCEPTION_MESSAGE = "exception.message"
 EXCEPTION_STACKTRACE = "exception.stacktrace"
 REDACTED = "[redacted]"
+# What a validation error keeps in telemetry. Its input, context and message
+# go, because a custom validator's message can echo the input.
+VALIDATION_ERROR_KEYS = ("loc", "type")
 
 
 def secret_values(settings: Settings) -> frozenset[str]:
