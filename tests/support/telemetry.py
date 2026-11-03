@@ -31,6 +31,8 @@ TEST_SERVICE = "tally-aloft-test"
 # The test client logs each request's full URL at INFO, query values included,
 # which would put a test's own markers into log spans.
 _QUIETED_LOGGERS = ("httpx", "httpcore")
+# Loggers whose level `configure_observability` sets, restored after a test.
+_CONFIGURED_LOGGERS = ("taskiq",)
 _FASTAPI_SCOPE = "opentelemetry.instrumentation.fastapi"
 _ASYNCPG_SCOPE = "opentelemetry.instrumentation.asyncpg"
 _REDIS_SCOPE = "opentelemetry.instrumentation.redis"
@@ -126,7 +128,10 @@ def isolated_observability() -> Generator[None]:
     """
     root = logging.getLogger()
     root_state = (root.level, list(root.handlers))
-    quieted = {name: logging.getLogger(name).level for name in _QUIETED_LOGGERS}
+    quieted = {
+        name: logging.getLogger(name).level
+        for name in (*_QUIETED_LOGGERS, *_CONFIGURED_LOGGERS)
+    }
     for name in _QUIETED_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
     try:

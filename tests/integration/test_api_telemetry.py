@@ -19,6 +19,7 @@ from tests.support.telemetry_routes import (
     PREFIX,
     SECOND_QUERY,
     telemetry_app,
+    telemetry_router,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ async def app(
     engine = create_async_engine(database.app_url)
     cache_client = build_client(valkey_url)
     instrument_cache_client(cache_client)
-    yield telemetry_app(engine, cache_client)
+    yield telemetry_app(telemetry_router(engine, cache_client))
     await cache_client.aclose()
     await engine.dispose()
 

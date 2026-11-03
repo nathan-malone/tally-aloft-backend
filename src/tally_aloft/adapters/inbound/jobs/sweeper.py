@@ -1,7 +1,10 @@
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
-from tally_aloft.adapters.inbound.jobs.dependencies import UseCasesDep  # noqa: TC001  # Taskiq reads task annotations at run time.
-from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
+from tally_aloft.adapters.inbound.jobs.tasks import scheduled_task
+
+if TYPE_CHECKING:
+    from tally_aloft.application.registry import UseCases
 
 # The sweep runs every minute. Its timeout stays below that, so one
 # scheduler's sweeps don't overlap; `SKIP LOCKED` makes an overlap safe anyway.
@@ -9,11 +12,11 @@ SWEEP_INTERVAL = timedelta(minutes=1)
 SWEEP_TIMEOUT = timedelta(seconds=50)
 
 
-async def sweep(use_cases: UseCasesDep) -> None:
+async def sweep(use_cases: UseCases) -> None:
     """Recover stalled jobs, and fail the ones that can never run again."""
     await use_cases.sweep_jobs()
 
 
-SWEEP_TASK = TaskDefinition(
-    name="jobs.sweep", function=sweep, timeout=SWEEP_TIMEOUT, every=SWEEP_INTERVAL
+SWEEP_TASK = scheduled_task(
+    "jobs.sweep", sweep, timeout=SWEEP_TIMEOUT, every=SWEEP_INTERVAL
 )

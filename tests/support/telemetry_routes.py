@@ -14,17 +14,22 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import insert, text
 
+from tally_aloft.adapters.outbound.postgres.unit_of_work import unit_of_work_factory
 from tally_aloft.adapters.outbound.redis.cache import ValkeyCache
+from tally_aloft.adapters.outbound.taskiq.job_queue import TaskiqJobQueue
 from tally_aloft.bootstrap.app import create_app
 from tally_aloft.bootstrap.container import Overrides
 from tally_aloft.bootstrap.observability import instrument_app
 from tally_aloft.bootstrap.settings import Settings
+from tally_aloft.domain.shared.ids import PilotId
+from tests.support.jobs import RecordTestJob
 from tests.support.tables import telemetry_rows
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncEngine
+    from taskiq import AsyncBroker
 
 PREFIX = "/test/telemetry"
 CACHE_KEY = "telemetry"
@@ -90,8 +95,21 @@ def telemetry_router(engine: AsyncEngine, cache_client: Redis) -> APIRouter:
     return router
 
 
-def telemetry_app(engine: AsyncEngine, cache_client: Redis) -> FastAPI:
-    """Return the API with the marker routes, traced as `main.py` traces it."""
+def jobs_router(engine: AsyncEngine, broker: AsyncBroker) -> APIRouter:
+    """Return the route that records an `ECHO` job and dispatches it on `broker`."""
+    router = APIRouter(prefix=PREFIX, tags=["telemetry"])
+    record = RecordTestJob(unit_of_work_factory(engine), TaskiqJobQueue(broker))
+
+    @router.post("/jobs", status_code=HTTPStatus.ACCEPTED)
+    async def jobs(body: Marked) -> None:
+        _ = await record(PilotId.new(), body.marker)
+
+    return router
+
+
+def telemetry_app(*routers: APIRouter) -> FastAPI:
+    """Return the API with `routers`, traced as `main.py` traces it."""
     app = create_app(Settings.for_tests(), Overrides(dependency_checks=()))
-    app.include_router(telemetry_router(engine, cache_client))
+    for router in routers:
+        app.include_router(router)
     return instrument_app(app)
