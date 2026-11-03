@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     # The most rows each of the sweeper's steps handles in one run.
     sweep_batch_size: Annotated[int, Field(ge=1)] = 500
 
+    # The Logfire write token. Without one, nothing is exported.
+    logfire_token: SecretStr | None = None
+
     @field_validator("database_url")
     @classmethod
     def _parse_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
@@ -136,6 +139,14 @@ class Settings(BaseSettings):
     def _parse_valkey_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
         """Accept only a redis:// or rediss:// URL, with TLS when deployed."""
         return check_valkey_url(value, deployed=_deployed(info))
+
+    @field_validator("logfire_token", mode="before")
+    @classmethod
+    def _parse_logfire_token(cls, value: object) -> object:
+        """Treat an empty or blank token, as `.env.example` sets it, as none."""
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     @field_validator("forwarded_allow_ips", mode="before")
     @classmethod

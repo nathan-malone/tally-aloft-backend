@@ -170,6 +170,7 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_BROKER_STREAM_MAXLEN` | The approximate number of messages the broker's stream is trimmed to, at least 1. A trimmed message's job is recovered from its row. | `100000` | no |
 | `TALLY_JOB_STALE_AFTER` | Seconds after a job's last dispatch that the sweeper dispatches it again, at least 1: a `queued` job no worker took, or a `running` one whose lease has expired. A failed attempt's retry waits for it too. | `300` | no |
 | `TALLY_SWEEP_BATCH_SIZE` | The most jobs each step of the sweeper handles in one run, at least 1. | `500` | no |
+| `TALLY_LOGFIRE_TOKEN` | The Logfire write token. Unset or empty, the processes send nothing to Logfire, even with `LOGFIRE_TOKEN` or a Logfire credentials file present. Secret. | none | no |
 | `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in `TALLY_DATABASE_URL`'s format and with its `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 
