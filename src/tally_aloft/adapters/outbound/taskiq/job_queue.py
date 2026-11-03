@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from tally_aloft.application.shared.jobs.kinds import JobId
 
 # Only the trace context travels: clients' `baggage` stays out of messages.
+# `adapters/inbound/jobs/tracing.py` reads it back from the labels.
 _PROPAGATOR = TraceContextTextMapPropagator()
 
 

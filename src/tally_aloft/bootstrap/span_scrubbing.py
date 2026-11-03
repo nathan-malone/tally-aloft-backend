@@ -9,7 +9,7 @@ the client's address and the query string, and redacts secret values.
 """
 
 import json
-from collections.abc import Mapping, Sequence
+import re
 from typing import TYPE_CHECKING, override
 
 from opentelemetry.sdk.trace import Event, ReadableSpan
@@ -22,11 +22,13 @@ from tally_aloft.bootstrap.scrubbing import (
     EXCEPTION_STACKTRACE,
     SCRUBBED_MARK,
     SQLSTATE_ATTRIBUTE,
-    VALIDATION_ERROR_KEYS,
     Redactor,
+    cut_validation_errors,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from opentelemetry.util.types import Attributes, AttributeValue
 
 _EXCEPTION_EVENT = "exception"
@@ -73,6 +75,11 @@ _URL_KEYS = ("http.url", "url.full", "http.target")
 # Present on HTTP spans, whose message Logfire builds from the method and the
 # target, with the query values appended after ` ? `.
 _HTTP_KEYS = ("http.route", "http.target", "url.path")
+# Headers, which OpenTelemetry records only when its capture variables are set.
+# `X-Forwarded-For` alone would hold the client's address.
+_HEADER_PREFIXES = ("http.request.header.", "http.response.header.")
+# What a status description may keep: an exception type's name.
+_TYPE_NAME = re.compile(r"[A-Za-z_][\w.]*")
 
 
 class ScrubbingSpanExporter(SpanExporter):
@@ -86,12 +93,12 @@ class ScrubbingSpanExporter(SpanExporter):
     def __init__(self, inner: SpanExporter, secrets: frozenset[str]) -> None:
         """Wrap `inner`, redacting each value in `secrets`."""
         self._inner = inner
-        self._secrets = secrets
+        self._redactor = Redactor(secrets)
 
     @override
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """Scrub `spans`, then export them through `inner`."""
-        return self._inner.export([scrub_span(span, self._secrets) for span in spans])
+        return self._inner.export([scrub_span(span, self._redactor) for span in spans])
 
     @override
     def shutdown(self) -> None:
@@ -104,15 +111,15 @@ class ScrubbingSpanExporter(SpanExporter):
         return self._inner.force_flush(timeout_millis)
 
 
-def scrub_span(span: ReadableSpan, secrets: frozenset[str]) -> ReadableSpan:
+def scrub_span(span: ReadableSpan, redactor: Redactor) -> ReadableSpan:
     """
     Return a copy of `span` that keeps only what Logfire may receive.
 
     The name, context, parent, resource, kind, times, scope and link contexts
     are carried over unchanged; the attributes, events, link attributes and
-    status are rebuilt by the rules in this module.
+    status are rebuilt by the rules in this module, with `redactor` hiding
+    the secrets.
     """
-    redactor = Redactor(secrets)
     attributes = _scrub_request(_scrub_validation_data(_as_dict(span.attributes)))
     return ReadableSpan(
         name=redactor.text(span.name),
@@ -155,16 +162,19 @@ def _scrub_event(event: Event) -> dict[str, AttributeValue]:
 
 def _scrub_status(status: Status, redactor: Redactor) -> Status:
     """
-    Cut a status description before its first `:`.
+    Cut a status description to the exception type it starts with, or drop it.
 
     Logfire and OpenTelemetry both describe an exception's status as
-    `<Name>: <message>`, so this keeps the type.
+    `<Name>: <message>`, so this keeps the type. A description that doesn't
+    start with a type name could be anything, so none is kept.
     """
     description = status.description
     if description is None:
         return status
-    name = redactor.text(description.partition(":")[0])
-    return Status(status.status_code, name)
+    name = description.partition(":")[0].strip()
+    if _TYPE_NAME.fullmatch(name) is None:
+        return Status(status.status_code)
+    return Status(status.status_code, redactor.text(name))
 
 
 def _scrub_validation_data(
@@ -191,23 +201,17 @@ def _validation_errors(data: AttributeValue) -> list[dict[str, object]] | None:
         return None
     if not isinstance(parsed, list):
         return None
-    items: list[object] = list(parsed)
-    errors: list[dict[str, object]] = []
-    for item in items:
-        if isinstance(item, Mapping):
-            error: Mapping[object, object] = item
-            errors.append(
-                {key: error[key] for key in VALIDATION_ERROR_KEYS if key in error}
-            )
-    return errors
+    return cut_validation_errors(parsed)
 
 
 def _scrub_request(attributes: dict[str, AttributeValue]) -> dict[str, AttributeValue]:
-    """Drop the client's address and the query string; keep the path."""
+    """Drop the client's address, the query string and headers; keep the path."""
     scrubbed = {
         key: value
         for key, value in attributes.items()
-        if key not in _CLIENT_ADDRESS_KEYS and key != _QUERY_KEY
+        if key not in _CLIENT_ADDRESS_KEYS
+        and key != _QUERY_KEY
+        and not key.startswith(_HEADER_PREFIXES)
     }
     for key in _URL_KEYS:
         value = scrubbed.get(key)

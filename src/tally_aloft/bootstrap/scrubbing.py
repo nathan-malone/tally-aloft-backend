@@ -11,6 +11,14 @@ calls `record_exception_safely`, the only place that still has the exception
 object. Every exported span then passes `ScrubbingSpanExporter`
 (`span_scrubbing.py`), which enforces the same allowlist whether or not the
 callback ran.
+
+This module holds what both layers and the logs share:
+- `safe_message` and `render_safely`, which describe an exception without
+  its message, and `record_exception_safely`, the callback built on them;
+- `secret_values` and `Redactor`, which find and hide secret values;
+- `cut_validation_errors`, which keeps only a validation error's location and
+  type;
+- `TelemetryLogFilter`, which applies these rules to log records.
 """
 
 import logging
@@ -45,6 +53,26 @@ REDACTED = "[redacted]"
 # What a validation error keeps in telemetry. Its input, context and message
 # go, because a custom validator's message can echo the input.
 VALIDATION_ERROR_KEYS = ("loc", "type")
+
+
+def cut_validation_errors(errors: object) -> list[dict[str, object]]:
+    """
+    Return validation errors with only their location and type.
+
+    `errors` is the list pydantic, FastAPI or Logfire holds. An entry that
+    isn't a mapping is dropped, and anything other than a list gives none.
+    """
+    if not isinstance(errors, Sequence) or isinstance(errors, str | bytes):
+        return []
+    entries: Sequence[object] = errors
+    cut: list[dict[str, object]] = []
+    for entry in entries:
+        if isinstance(entry, Mapping):
+            error: Mapping[object, object] = entry
+            cut.append(
+                {key: error[key] for key in VALIDATION_ERROR_KEYS if key in error}
+            )
+    return cut
 
 
 def secret_values(settings: Settings) -> frozenset[str]:
@@ -123,12 +151,15 @@ def _render(error: BaseException, seen: set[int]) -> list[str]:
 
 
 def _describe(error: BaseException) -> str:
-    """Return the one line that stands for `error` in a rendered chain."""
-    if is_database_error(error):
-        summary = describe_database_error(error)
-        if summary is not None:
-            return summary.text()
-    return qualified_name(error)
+    """
+    Return the one line that stands for `error` in a rendered chain.
+
+    Unlike `safe_message`, which describes the first database error anywhere
+    in the chain, each line here describes its own exception, because the
+    chain's other exceptions get lines of their own.
+    """
+    summary = describe_database_error(error) if is_database_error(error) else None
+    return qualified_name(error) if summary is None else summary.text()
 
 
 def record_exception_safely(helper: ExceptionCallbackHelper) -> None:

@@ -11,6 +11,9 @@ from tally_aloft.bootstrap.settings import (
     UNUSED_VALKEY_URL,
 )
 
+# The probes read OpenTelemetry's and FastAPI's own private markers, because
+# neither library says publicly whether an app is instrumented. A library
+# upgrade that renames one fails here, not in production.
 API_PROBE = """
 import json
 import opentelemetry.trace

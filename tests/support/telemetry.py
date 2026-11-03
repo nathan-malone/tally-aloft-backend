@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.trace import SpanKind
 
-from tally_aloft.bootstrap.observability import configure_observability
+from tally_aloft.bootstrap.observability import QUIET_LOGGERS, configure_observability
 from tally_aloft.bootstrap.settings import Settings
 
 if TYPE_CHECKING:
@@ -31,8 +31,6 @@ TEST_SERVICE = "tally-aloft-test"
 # The test client logs each request's full URL at INFO, query values included,
 # which would put a test's own markers into log spans.
 _QUIETED_LOGGERS = ("httpx", "httpcore")
-# Loggers whose level `configure_observability` sets, restored after a test.
-_CONFIGURED_LOGGERS = ("taskiq",)
 _FASTAPI_SCOPE = "opentelemetry.instrumentation.fastapi"
 _ASYNCPG_SCOPE = "opentelemetry.instrumentation.asyncpg"
 _REDIS_SCOPE = "opentelemetry.instrumentation.redis"
@@ -85,7 +83,7 @@ class Telemetry:
     def assert_absent(self, marker: str) -> None:
         """Fail if any exported span, or the stderr log, holds `marker`."""
         for span in self.spans():
-            assert marker not in _everything_in(span), span.name
+            assert marker not in span_text(span), span.name
         assert marker not in self.logs()
 
 
@@ -105,7 +103,7 @@ def _statement(span: ReadableSpan) -> str:
     return statement if isinstance(statement, str) else ""
 
 
-def _everything_in(span: ReadableSpan) -> str:
+def span_text(span: ReadableSpan) -> str:
     """Return every value a span holds, as one text to search."""
     parts: list[object] = [
         span.name,
@@ -130,7 +128,7 @@ def isolated_observability() -> Generator[None]:
     root_state = (root.level, list(root.handlers))
     quieted = {
         name: logging.getLogger(name).level
-        for name in (*_QUIETED_LOGGERS, *_CONFIGURED_LOGGERS)
+        for name in (*_QUIETED_LOGGERS, *QUIET_LOGGERS)
     }
     for name in _QUIETED_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
@@ -156,7 +154,10 @@ def configured_telemetry(**settings: object) -> Telemetry:
         Settings.for_tests(**settings), TEST_SERVICE, exporters=(exporter,)
     )
     log_output = io.StringIO()
-    for handler in logging.getLogger().handlers:
-        if type(handler) is logging.StreamHandler:
-            _ = handler.setStream(log_output)
+    [to_stderr] = [
+        handler
+        for handler in logging.getLogger().handlers
+        if type(handler) is logging.StreamHandler
+    ]
+    _ = to_stderr.setStream(log_output)
     return Telemetry(exporter, log_output)

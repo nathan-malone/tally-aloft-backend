@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
 
 # Only the trace context travels: clients' `baggage` stays out of messages.
+# `adapters/outbound/taskiq/job_queue.py` writes it into the labels.
 _PROPAGATOR = TraceContextTextMapPropagator()
 _tracer = trace.get_tracer(__name__)
 

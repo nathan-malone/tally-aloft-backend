@@ -50,11 +50,13 @@ def qualified_name(error: BaseException) -> str:
 
 def is_database_error(error: BaseException) -> bool:
     """Return whether `error` comes from asyncpg or SQLAlchemy."""
+    return any(_comes_from(error, package) for package in _DATABASE_PACKAGES)
+
+
+def _comes_from(error: BaseException, package: str) -> bool:
+    """Return whether `error`'s class is defined in `package` or below it."""
     module = type(error).__module__
-    return any(
-        module == package or module.startswith(f"{package}.")
-        for package in _DATABASE_PACKAGES
-    )
+    return module == package or module.startswith(f"{package}.")
 
 
 def linked_errors(error: BaseException) -> Iterator[BaseException]:
@@ -106,17 +108,19 @@ def _server_fields(error: BaseException) -> tuple[str | None, str | None]:
     asyncpg's own error is preferred: SQLAlchemy's adapted error copies its
     `sqlstate` but not its `constraint_name`.
     """
-    candidates = [
+    with_sqlstate = [
         found
         for found in linked_errors(error)
         if is_database_error(found)
         and isinstance(getattr(found, "sqlstate", None), str)
     ]
-    candidates.sort(key=lambda found: not type(found).__module__.startswith("asyncpg"))
+    from_asyncpg = [found for found in with_sqlstate if _comes_from(found, "asyncpg")]
+    candidates = from_asyncpg if len(from_asyncpg) > 0 else with_sqlstate
     if len(candidates) == 0:
         return None, None
-    sqlstate = getattr(candidates[0], "sqlstate", None)
-    constraint = getattr(candidates[0], "constraint_name", None)
+    chosen = candidates[0]
+    sqlstate = getattr(chosen, "sqlstate", None)
+    constraint = getattr(chosen, "constraint_name", None)
     return (
         sqlstate if isinstance(sqlstate, str) else None,
         constraint if isinstance(constraint, str) else None,

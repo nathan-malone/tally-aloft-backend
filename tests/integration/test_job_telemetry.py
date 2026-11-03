@@ -129,8 +129,7 @@ async def test_a_jobs_database_error_leaves_no_trace_of_its_data(
         await eventually(failed)
 
     telemetry.assert_absent(JOB_MARKER)
-    [task_span] = spans_named(telemetry, UNIQUE_VIOLATION.name)
-    assert task_span.context is not None
+    assert len(spans_named(telemetry, UNIQUE_VIOLATION.name)) == 1
     [log_event] = [
         event
         for span in telemetry.spans()

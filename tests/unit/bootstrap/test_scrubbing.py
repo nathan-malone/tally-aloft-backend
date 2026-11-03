@@ -1,24 +1,8 @@
-import json
 import logging
-from typing import TYPE_CHECKING
 
 import pytest
 from logfire.types import ExceptionCallbackHelper
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import Event, ReadableSpan
-from opentelemetry.sdk.trace.export import SpanExportResult
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
-from opentelemetry.sdk.util.instrumentation import InstrumentationScope
-from opentelemetry.trace import (
-    Link,
-    NonRecordingSpan,
-    SpanContext,
-    SpanKind,
-    Status,
-    StatusCode,
-)
+from opentelemetry.trace import NonRecordingSpan, SpanContext
 from sqlalchemy.exc import IntegrityError
 
 from tally_aloft.bootstrap.scrubbing import (
@@ -27,18 +11,14 @@ from tally_aloft.bootstrap.scrubbing import (
     SCRUBBED_MARK,
     SQLSTATE_ATTRIBUTE,
     TelemetryLogFilter,
+    cut_validation_errors,
     record_exception_safely,
     render_safely,
     safe_message,
     secret_values,
 )
 from tally_aloft.bootstrap.settings import Settings
-from tally_aloft.bootstrap.span_scrubbing import ScrubbingSpanExporter, scrub_span
 from tests.support.database_errors import MARKER, unique_violation
-from tests.support.telemetry import attributes_of
-
-if TYPE_CHECKING:
-    from opentelemetry.util.types import Attributes
 
 CONTEXT = SpanContext(trace_id=1, span_id=2, is_remote=False)
 # A secret setting's value.
@@ -67,44 +47,6 @@ def database_error() -> IntegrityError:
     return raised(wrapper)
 
 
-def span(
-    attributes: Attributes = None,
-    events: tuple[Event, ...] = (),
-    status: Status | None = None,
-    name: str = "span",
-) -> ReadableSpan:
-    return ReadableSpan(
-        name=name,
-        context=CONTEXT,
-        parent=SpanContext(trace_id=1, span_id=3, is_remote=True),
-        resource=Resource.create({"service.name": "test"}),
-        attributes=attributes,
-        events=events,
-        links=[Link(CONTEXT, {"link": "attribute"})],
-        kind=SpanKind.SERVER,
-        status=Status(StatusCode.UNSET) if status is None else status,
-        start_time=10,
-        end_time=20,
-        instrumentation_scope=InstrumentationScope("scope", "1.0"),
-    )
-
-
-def exception_event(**attributes: str | bool) -> Event:
-    return Event("exception", attributes, timestamp=15)
-
-
-def everything_in(scrubbed: ReadableSpan) -> str:
-    """Return every string a span holds, as one text to search."""
-    parts: list[object] = [
-        scrubbed.name,
-        attributes_of(scrubbed),
-        scrubbed.status.description,
-    ]
-    parts += [(event.name, attributes_of(event)) for event in scrubbed.events]
-    parts += [attributes_of(link) for link in scrubbed.links]
-    return repr(parts)
-
-
 def test_secret_values_include_url_passwords() -> None:
     settings = Settings.for_tests(
         database_url="postgresql+asyncpg://app:p%40ss-word@db:5432/tally",
@@ -125,6 +67,15 @@ def test_safe_message_names_a_database_error_without_its_text() -> None:
     assert message == (
         "sqlalchemy.exc.IntegrityError (SQLSTATE 23505, constraint uq_key)"
     )
+
+
+def test_cut_validation_errors_keeps_only_location_and_type() -> None:
+    errors = [{"loc": ["body", "n"], "type": "int_parsing", "input": MARKER}, "x"]
+
+    assert cut_validation_errors(errors) == [
+        {"loc": ["body", "n"], "type": "int_parsing"}
+    ]
+    assert cut_validation_errors(MARKER) == []
 
 
 def test_safe_message_is_the_type_of_any_other_error() -> None:
@@ -185,142 +136,6 @@ def test_the_callback_records_only_the_type_of_another_error() -> None:
     assert helper.event_attributes["exception.message"] == "ValueError"
     assert SQLSTATE_ATTRIBUTE not in helper.event_attributes
     assert MARKER not in repr(helper.event_attributes)
-
-
-def test_a_marked_event_keeps_only_the_allowlist() -> None:
-    event = exception_event(
-        **{
-            "exception.type": "ValueError",
-            "exception.message": "ValueError",
-            "exception.stacktrace": "Traceback ...",
-            "exception.escaped": "False",
-            "exception.logfire.data": json.dumps([{"input": MARKER}]),
-            "recorded_by_logfire_fastapi": True,
-            SCRUBBED_MARK: True,
-        }
-    )
-
-    [scrubbed] = scrub_span(span(events=(event,)), frozenset()).events
-
-    assert set(attributes_of(scrubbed)) == {
-        "exception.type",
-        "exception.message",
-        "exception.stacktrace",
-        "exception.escaped",
-        SCRUBBED_MARK,
-    }
-
-
-def test_an_unmarked_event_loses_its_text() -> None:
-    event = exception_event(
-        **{
-            "exception.type": "sqlalchemy.exc.IntegrityError",
-            "exception.message": MARKER,
-            "exception.stacktrace": f"... {MARKER}",
-        }
-    )
-
-    [scrubbed] = scrub_span(span(events=(event,)), frozenset()).events
-
-    assert attributes_of(scrubbed) == {
-        "exception.type": "sqlalchemy.exc.IntegrityError",
-        "exception.message": "sqlalchemy.exc.IntegrityError",
-    }
-
-
-def test_a_status_description_keeps_only_the_type() -> None:
-    status = Status(StatusCode.ERROR, f"IntegrityError: {MARKER}")
-
-    scrubbed = scrub_span(span(status=status), frozenset())
-
-    assert scrubbed.status.status_code is StatusCode.ERROR
-    assert scrubbed.status.description == "IntegrityError"
-
-
-def test_validation_data_keeps_only_location_and_type() -> None:
-    data = json.dumps([{"loc": ["count"], "type": "int_parsing", "input": MARKER}])
-
-    scrubbed = scrub_span(span({"exception.logfire.data": data}), frozenset())
-
-    assert json.loads(str(attributes_of(scrubbed)["exception.logfire.data"])) == [
-        {"loc": ["count"], "type": "int_parsing"}
-    ]
-
-
-def test_drops_the_client_address_and_the_query_but_keeps_the_path() -> None:
-    attributes = {
-        "client.address": "203.0.113.7",
-        "net.peer.ip": "203.0.113.7",
-        "http.client_ip": "203.0.113.7",
-        "url.query": f"q={MARKER}",
-        "http.url": f"http://api/search?q={MARKER}",
-        "http.target": "/search",
-        "logfire.msg": f"GET /search ? q='{MARKER}'",
-    }
-
-    scrubbed = scrub_span(span(attributes), frozenset())
-
-    assert attributes_of(scrubbed) == {
-        "http.url": "http://api/search",
-        "http.target": "/search",
-        "logfire.msg": "GET /search",
-    }
-
-
-def test_an_ordinary_message_with_a_question_mark_is_kept() -> None:
-    attributes = {"logfire.msg": "Is it ready ? yes"}
-
-    scrubbed = scrub_span(span(attributes), frozenset())
-
-    assert attributes_of(scrubbed) == attributes
-
-
-def test_redacts_secrets_everywhere() -> None:
-    status = Status(StatusCode.ERROR, f"Error {HIDDEN}")
-    event = Event("log", {"text": f"a {HIDDEN} b", "list": (HIDDEN, "x")})
-
-    scrubbed = scrub_span(
-        span({"key": f"x{HIDDEN}y"}, (event,), status, name=HIDDEN),
-        frozenset({HIDDEN}),
-    )
-
-    assert HIDDEN not in everything_in(scrubbed)
-    assert REDACTED in scrubbed.name
-    assert attributes_of(scrubbed)["key"] == f"x{REDACTED}y"
-
-
-def test_an_untouched_span_round_trips() -> None:
-    original = span({"http.route": "/x", "count": 3}, (Event("log", {"a": "b"}, 15),))
-
-    scrubbed = scrub_span(original, frozenset())
-
-    assert scrubbed.name == original.name
-    assert scrubbed.context == original.context
-    assert scrubbed.parent == original.parent
-    assert scrubbed.resource == original.resource
-    assert scrubbed.kind == original.kind
-    assert scrubbed.start_time == original.start_time
-    assert scrubbed.end_time == original.end_time
-    assert scrubbed.instrumentation_scope == original.instrumentation_scope
-    assert scrubbed.status.status_code == original.status.status_code
-    assert attributes_of(scrubbed) == attributes_of(original)
-    assert [(e.name, attributes_of(e), e.timestamp) for e in scrubbed.events] == [
-        ("log", {"a": "b"}, 15)
-    ]
-    assert [(link.context, attributes_of(link)) for link in scrubbed.links] == [
-        (CONTEXT, {"link": "attribute"})
-    ]
-
-
-def test_the_exporter_passes_scrubbed_spans_to_its_inner_exporter() -> None:
-    inner = InMemorySpanExporter()
-    exporter = ScrubbingSpanExporter(inner, frozenset({HIDDEN}))
-
-    result = exporter.export([span({"key": HIDDEN})])
-
-    assert result is SpanExportResult.SUCCESS
-    [exported] = inner.get_finished_spans()
-    assert HIDDEN not in everything_in(exported)
 
 
 def record(

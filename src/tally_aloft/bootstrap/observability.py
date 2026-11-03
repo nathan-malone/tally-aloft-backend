@@ -10,7 +10,6 @@ strings and URLs (see tech-stack.md, Observability).
 
 import logging
 import sys
-from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import logfire
@@ -22,14 +21,16 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcess
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased
 
 from tally_aloft.bootstrap.scrubbing import (
-    VALIDATION_ERROR_KEYS,
     TelemetryLogFilter,
+    cut_validation_errors,
     record_exception_safely,
     secret_values,
 )
 from tally_aloft.bootstrap.span_scrubbing import ScrubbingSpanExporter
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from fastapi import FastAPI
     from opentelemetry.sdk.trace import SpanProcessor
     from opentelemetry.sdk.trace.export import SpanExporter
@@ -46,7 +47,7 @@ WORKER_SERVICE = "tally-aloft-worker"
 _SAMPLER = ParentBased(ALWAYS_ON, remote_parent_not_sampled=ALWAYS_ON)
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 # Taskiq logs every task it runs at INFO, which the task spans already show.
-_QUIET_LOGGERS = ("taskiq",)
+QUIET_LOGGERS = ("taskiq",)
 
 
 def configure_observability(
@@ -115,7 +116,7 @@ def _configure_logging(log_filter: TelemetryLogFilter) -> None:
         handler.addFilter(log_filter)
         root.addHandler(handler)
     root.setLevel(logging.INFO)
-    for name in _QUIET_LOGGERS:
+    for name in QUIET_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
@@ -142,20 +143,10 @@ def request_attributes(
     Return what a request span records of its endpoint's arguments.
 
     No argument value is kept. Validation errors keep their location and type,
-    so the span still shows a validation failure. The result is never empty,
-    because Logfire sets a request span with no attributes to debug level.
+    which Logfire puts on the request span as `fastapi.arguments.errors`, so
+    the span still shows a validation failure.
     """
-    errors = attributes.get("errors")
-    kept: list[dict[str, object]] = []
-    if isinstance(errors, Sequence) and not isinstance(errors, str):
-        items: Sequence[object] = errors
-        for item in items:
-            if isinstance(item, Mapping):
-                error: Mapping[object, object] = item
-                kept.append(
-                    {key: error[key] for key in VALIDATION_ERROR_KEYS if key in error}
-                )
-    return {"errors": kept}
+    return {"errors": cut_validation_errors(attributes.get("errors"))}
 
 
 def _logfire_exporter(token: str) -> OTLPSpanExporter:

@@ -153,7 +153,7 @@ A failed check stops the workflow before anything is published. Fix it on `main`
 
 ## Settings
 
-The processes read environment variables only, all prefixed `TALLY_`, and ignore unknown ones. Durations are integer seconds, lists are comma-separated, and maps are JSON. A missing or invalid variable stops the process before it serves, with one line that names the variable and its error type.
+The processes read environment variables only, all prefixed `TALLY_`, and ignore unknown ones. Durations are integer seconds, lists are comma-separated, and maps are JSON. A missing or invalid variable stops the process before it serves, with one line that names the variable and its error type. So does a set, non-empty `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `LOGFIRE_PYDANTIC_PLUGIN_RECORD`, named as `(forbidden)`: each of the first three would make Logfire export spans or logs around the scrubbing, and the last would record validation inputs. Unset them in the shell that runs the processes, even for a local collector.
 
 | Variable | Format | Default | Required |
 | --- | --- | --- | --- |
