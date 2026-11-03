@@ -41,10 +41,10 @@ class DatabaseErrorSummary:
         return f"{self.type_name} ({', '.join(details)})"
 
 
-def qualified_name(error: BaseException) -> str:
-    """Return the error's type as OpenTelemetry records it: `module.qualname`."""
-    module = type(error).__module__
-    name = type(error).__qualname__
+def qualified_name(value: object) -> str:
+    """Return the value's type as OpenTelemetry records it: `module.qualname`."""
+    module = type(value).__module__
+    name = type(value).__qualname__
     return name if module in {"", "builtins"} else f"{module}.{name}"
 
 

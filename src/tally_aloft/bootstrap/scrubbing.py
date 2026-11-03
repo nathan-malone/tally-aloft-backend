@@ -248,8 +248,13 @@ class TelemetryLogFilter(logging.Filter):
             # The handler prints the message and arguments when it reports it.
             # Each is redacted on its own, keeping the argument count, so
             # formatting still fails, unless the secret held the bad conversion.
+            # A message that isn't a string becomes its shown text, because
+            # the handler would otherwise call `str` on it again; the record
+            # may then format, or still fail.
             if isinstance(record.msg, str):
                 record.msg = self._redactor.text(record.msg)
+            else:
+                record.msg = self._shown(record.msg)
             record.args = self._redact_arguments(record.args)
             return
         if self._redactor.holds_secret(message):
@@ -278,6 +283,13 @@ class TelemetryLogFilter(logging.Filter):
         return (
             self._redactor.text(shown) if self._redactor.holds_secret(shown) else value
         )
+
+    def _shown(self, value: object) -> str:
+        """Return `value`'s redacted `repr`, or its type's name if that fails."""
+        try:
+            return self._redactor.text(repr(value))
+        except Exception:  # noqa: BLE001  # The filter must never raise.
+            return qualified_name(value)
 
     def _redact_exception(self, record: logging.LogRecord) -> None:
         text = record.exc_text

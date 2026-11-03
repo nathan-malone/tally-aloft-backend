@@ -1,4 +1,6 @@
+import io
 import logging
+from typing import override
 
 import pytest
 from logfire.types import ExceptionCallbackHelper
@@ -252,3 +254,53 @@ def test_the_filter_redacts_a_record_whose_format_is_broken(
     assert REDACTED in repr(once)
     with pytest.raises((TypeError, KeyError)):
         _ = log_record.getMessage()
+
+
+class ShowsSecret:
+    """A message object whose text is a broken format and whose repr shows a secret."""
+
+    @override
+    def __str__(self) -> str:
+        return "%s %s"
+
+    @override
+    def __repr__(self) -> str:
+        return f"ShowsSecret({HIDDEN})"
+
+
+class RaisesSecret:
+    """A message object that can't be shown, and says a secret as it fails."""
+
+    @override
+    def __str__(self) -> str:
+        raise ValueError(HIDDEN)
+
+    @override
+    def __repr__(self) -> str:
+        raise ValueError(HIDDEN)
+
+
+@pytest.mark.parametrize(
+    ("msg", "shown"),
+    [
+        (ShowsSecret(), f"ShowsSecret({REDACTED})"),
+        (RaisesSecret(), f"{__name__}.RaisesSecret"),
+    ],
+)
+def test_the_filter_hides_a_message_object_whose_format_is_broken(
+    msg: object, shown: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    log_filter = TelemetryLogFilter(frozenset({HIDDEN}))
+    log_record = record(msg, ("one",))
+
+    _ = log_filter.filter(log_record)
+    once = (log_record.msg, log_record.args)
+    _ = log_filter.filter(log_record)
+    logging.StreamHandler(io.StringIO()).handle(log_record)
+
+    assert (log_record.msg, log_record.args) == once
+    assert log_record.msg == shown
+    # The handler reports the bad format on stderr, with the message.
+    reported = capsys.readouterr().err
+    assert "Logging error" in reported
+    assert HIDDEN not in reported
