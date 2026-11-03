@@ -1,3 +1,4 @@
+import logging
 from typing import TYPE_CHECKING, ClassVar, NoReturn, override
 
 import logfire
@@ -11,8 +12,9 @@ from tally_aloft.bootstrap.observability import (
     configure_observability,
     request_attributes,
 )
+from tally_aloft.bootstrap.scrubbing import TelemetryLogFilter
 from tally_aloft.bootstrap.settings import Settings
-from tests.support.telemetry import attributes_of
+from tests.support.telemetry import attributes_of, configured_telemetry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -134,3 +136,41 @@ def test_request_attributes_keep_only_an_errors_location_and_type() -> None:
     assert request_attributes(None, {"values": {}, "errors": [error]}) == {
         "errors": [{"loc": ["query", "count"], "type": "int_parsing"}]
     }
+
+
+def owned_filters(handler: logging.Handler) -> list[logging.Filter]:
+    return [f for f in handler.filters if isinstance(f, TelemetryLogFilter)]
+
+
+@pytest.mark.usefixtures("isolated_telemetry")
+def test_logs_go_to_stderr_and_logfire_through_one_filter() -> None:
+    foreign = logging.StreamHandler()
+    logging.getLogger().addHandler(foreign)
+
+    configure_observability(Settings.for_tests(), API_SERVICE)
+    configure_observability(Settings.for_tests(), API_SERVICE)
+
+    root = logging.getLogger()
+    assert foreign not in root.handlers
+    to_stderr, to_logfire = root.handlers
+    assert type(to_stderr) is logging.StreamHandler
+    assert isinstance(to_logfire, logfire.LogfireLoggingHandler)
+    assert isinstance(to_logfire.fallback, logging.NullHandler)
+    [stderr_filter] = owned_filters(to_stderr)
+    assert owned_filters(to_logfire) == [stderr_filter]
+    assert root.level == logging.INFO
+    assert logging.getLogger("taskiq").level == logging.WARNING
+
+
+@pytest.mark.usefixtures("isolated_telemetry")
+def test_a_logged_token_is_redacted_on_stderr_and_in_logfire() -> None:
+    telemetry = configured_telemetry(logfire_token=TOKEN)
+
+    logging.getLogger("test").warning("using %s", TOKEN)
+
+    assert "using" in telemetry.logs()
+    telemetry.assert_absent(TOKEN)
+    assert any(
+        "using" in str(attributes_of(span).get("logfire.msg"))
+        for span in telemetry.spans()
+    )

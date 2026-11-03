@@ -5,6 +5,7 @@ The `telemetry` fixture configures Logfire with an in-memory exporter, wrapped
 in the production `ScrubbingSpanExporter`, so a test checks the real rules.
 """
 
+import io
 import json
 import logging
 from contextlib import contextmanager
@@ -40,6 +41,7 @@ class Telemetry:
     """The spans a test's code exported, with ways to search them."""
 
     exporter: InMemorySpanExporter
+    log_output: io.StringIO
 
     def spans(self) -> tuple[ReadableSpan, ...]:
         """Return every span exported so far, oldest first."""
@@ -74,10 +76,15 @@ class Telemetry:
             if event.name == "exception"
         ]
 
+    def logs(self) -> str:
+        """Return what the production stderr handler has written."""
+        return self.log_output.getvalue()
+
     def assert_absent(self, marker: str) -> None:
-        """Fail if any exported span holds `marker`, anywhere in it."""
+        """Fail if any exported span, or the stderr log, holds `marker`."""
         for span in self.spans():
             assert marker not in _everything_in(span), span.name
+        assert marker not in self.logs()
 
 
 def attributes_of(item: ReadableSpan | Event | Link) -> dict[str, object]:
@@ -133,9 +140,18 @@ def isolated_observability() -> Generator[None]:
 
 
 def configured_telemetry(**settings: object) -> Telemetry:
-    """Configure Logfire with a fresh in-memory exporter, and return it."""
+    """
+    Configure Logfire with a fresh in-memory exporter, and return it.
+
+    The stderr handler `configure_observability` installs writes to a buffer
+    instead, so a test reads exactly what it lets through.
+    """
     exporter = InMemorySpanExporter()
     configure_observability(
         Settings.for_tests(**settings), TEST_SERVICE, exporters=(exporter,)
     )
-    return Telemetry(exporter)
+    log_output = io.StringIO()
+    for handler in logging.getLogger().handlers:
+        if type(handler) is logging.StreamHandler:
+            _ = handler.setStream(log_output)
+    return Telemetry(exporter, log_output)

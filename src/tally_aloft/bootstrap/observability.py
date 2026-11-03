@@ -8,6 +8,8 @@ own scrubbing callback can't do this job: it skips exception messages, query
 strings and URLs (see tech-stack.md, Observability).
 """
 
+import logging
+import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,7 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_ON, ParentBased
 
 from tally_aloft.bootstrap.scrubbing import (
     VALIDATION_ERROR_KEYS,
+    TelemetryLogFilter,
     record_exception_safely,
     secret_values,
 )
@@ -41,6 +44,9 @@ WORKER_SERVICE = "tally-aloft-worker"
 # Every request is recorded, whatever the client's own sampling decision: the
 # default sampler would drop a request whose `traceparent` ends in `-00`.
 _SAMPLER = ParentBased(ALWAYS_ON, remote_parent_not_sampled=ALWAYS_ON)
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+# Taskiq logs every task it runs at INFO, which the task spans already show.
+_QUIET_LOGGERS = ("taskiq",)
 
 
 def configure_observability(
@@ -50,7 +56,7 @@ def configure_observability(
     exporters: Sequence[SpanExporter] = (),
 ) -> None:
     """
-    Configure Logfire for this process, and instrument asyncpg.
+    Configure Logfire and logging for this process, and instrument asyncpg.
 
     Each exporter in `exporters`, which tests pass, gets every span at once,
     through the same scrubbing as Logfire's. Every argument that changes what
@@ -84,9 +90,33 @@ def configure_observability(
         additional_span_processors=processors,
         advanced=logfire.AdvancedOptions(exception_callback=record_exception_safely),
     )
+    _configure_logging(TelemetryLogFilter(secrets))
     # SQLAlchemy isn't instrumented: its spans would duplicate asyncpg's.
     if not AsyncPGInstrumentor().is_instrumented_by_opentelemetry:
         logfire.instrument_asyncpg()
+
+
+def _configure_logging(log_filter: TelemetryLogFilter) -> None:
+    """
+    Send every record at INFO or above to stderr and to Logfire, through `log_filter`.
+
+    The root logger's other handlers are removed, such as the one Taskiq's
+    `basicConfig` adds in the scheduler and in `spawn`-started workers, so no
+    record reaches a handler without the filter. Logfire's handler would print
+    a record logged during export a second time, so its fallback drops it.
+    """
+    to_stderr = logging.StreamHandler(sys.stderr)
+    to_stderr.setFormatter(logging.Formatter(_LOG_FORMAT))
+    to_logfire = logfire.LogfireLoggingHandler(fallback=logging.NullHandler())
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    for handler in (to_stderr, to_logfire):
+        handler.addFilter(log_filter)
+        root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    for name in _QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def instrument_app(app: FastAPI) -> FastAPI:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tally_aloft.adapters.inbound.http.errors import INTERNAL_ERROR
 from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.bootstrap.observability import instrument_cache_client
-from tally_aloft.bootstrap.scrubbing import SQLSTATE_ATTRIBUTE
+from tally_aloft.bootstrap.scrubbing import SCRUBBED_MARK, SQLSTATE_ATTRIBUTE
 from tests.support.http import request
 from tests.support.telemetry import attributes_of, configured_telemetry
 from tests.support.telemetry_routes import (
@@ -145,6 +145,15 @@ async def test_a_database_error_is_exported_as_its_type_and_sqlstate(
     ]
     assert len(events) > 0
     assert all(str(event["exception.type"]) != "" for event in events)
+    assert f"SQLSTATE {sqlstate}" in telemetry.logs()
+    [log_span] = [
+        span
+        for span in telemetry.spans()
+        if "Unhandled" in str(attributes_of(span).get("logfire.msg"))
+    ]
+    [log_event] = [event for event in log_span.events if event.name == "exception"]
+    assert attributes_of(log_event)[SQLSTATE_ATTRIBUTE] == sqlstate
+    assert attributes_of(log_event)[SCRUBBED_MARK] is True
 
 
 async def test_a_cache_value_is_never_exported(
