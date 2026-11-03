@@ -304,3 +304,80 @@ def test_the_filter_hides_a_message_object_whose_format_is_broken(
     reported = capsys.readouterr().err
     assert "Logging error" in reported
     assert HIDDEN not in reported
+
+
+class StrRaisesSecret:
+    """An argument whose `str` says a secret as it fails."""
+
+    @override
+    def __str__(self) -> str:
+        raise ValueError(HIDDEN)
+
+    @override
+    def __repr__(self) -> str:
+        return "StrRaisesSecret()"
+
+
+class StrShowsSecret:
+    """An argument whose `str` shows a secret and whose repr doesn't."""
+
+    @override
+    def __str__(self) -> str:
+        return HIDDEN
+
+    @override
+    def __repr__(self) -> str:
+        return "StrShowsSecret()"
+
+
+class FormatsOnceShown:
+    """A message object that can't be made text, but whose repr is a format."""
+
+    @override
+    def __str__(self) -> str:
+        raise ValueError
+
+    @override
+    def __repr__(self) -> str:
+        return "FormatsOnceShown(%s)"
+
+
+NOT_ENOUGH = "TypeError: not enough arguments for format string"
+
+
+@pytest.mark.parametrize(
+    ("msg", "bad_args", "error"),
+    [
+        # Still broken: the handler formats again, so an argument whose `str`
+        # raises is shown instead, and the others keep their types.
+        ("%s %s %s", (StrRaisesSecret(), 2), NOT_ENOUGH),
+        ("%(a)s %(b)s", ({"a": StrRaisesSecret()},), "KeyError: 'b'"),
+        ("%d %d %d", (1, 2), NOT_ENOUGH),
+        ("%(a)d %(b)d", ({"a": 1},), "KeyError: 'b'"),
+        # Formats once the message or the argument is shown.
+        (FormatsOnceShown(), (StrShowsSecret(),), None),
+        ("%s %s", (StrRaisesSecret(), "x"), None),
+    ],
+)
+def test_the_filter_hides_the_arguments_of_a_record_whose_format_is_broken(
+    msg: object,
+    bad_args: tuple[object, ...],
+    error: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_filter = TelemetryLogFilter(frozenset({HIDDEN}))
+    log_record = record(msg, bad_args)
+    stream = io.StringIO()
+
+    _ = log_filter.filter(log_record)
+    once = (log_record.msg, log_record.args)
+    _ = log_filter.filter(log_record)
+    logging.StreamHandler(stream).handle(log_record)
+
+    assert (log_record.msg, log_record.args) == once
+    reported = capsys.readouterr().err
+    assert HIDDEN not in stream.getvalue() + reported
+    if error is None:
+        assert "Logging error" not in reported
+    else:
+        assert error in reported

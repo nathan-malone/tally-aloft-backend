@@ -242,20 +242,26 @@ class TelemetryLogFilter(logging.Filter):
         return True
 
     def _redact_message(self, record: logging.LogRecord) -> None:
-        try:
-            message = record.getMessage()
-        except Exception:  # noqa: BLE001  # A bad format is the handler's to report.
-            # The handler prints the message and arguments when it reports it.
-            # Each is redacted on its own, keeping the argument count, so
-            # formatting still fails, unless the secret held the bad conversion.
-            # A message that isn't a string becomes its shown text, because
-            # the handler would otherwise call `str` on it again; the record
-            # may then format, or still fail.
+        message = _formatted(record)
+        if message is None:
+            # The handler prints the message and arguments when it reports a
+            # bad format. Each is redacted on its own, keeping the argument
+            # count, so formatting still fails, unless the secret held the
+            # bad conversion. A message that isn't a string becomes its shown
+            # text, because the handler would otherwise call `str` on it again.
             if isinstance(record.msg, str):
                 record.msg = self._redactor.text(record.msg)
             else:
                 record.msg = self._shown(record.msg)
             record.args = self._redact_arguments(record.args)
+            message = _formatted(record)
+        if message is None:
+            # The handler formats again, and prints what an argument's `str`
+            # raises, so such an argument becomes its shown text. The record
+            # may then format, so its text is checked like any other.
+            record.args = self._text_arguments(record.args)
+            message = _formatted(record)
+        if message is None:
             return
         if self._redactor.holds_secret(message):
             record.msg = self._redactor.text(message)
@@ -284,6 +290,28 @@ class TelemetryLogFilter(logging.Filter):
             self._redactor.text(shown) if self._redactor.holds_secret(shown) else value
         )
 
+    def _text_arguments(
+        self, arguments: tuple[object, ...] | Mapping[str, object] | None
+    ) -> tuple[object, ...] | Mapping[str, object] | None:
+        if arguments is None:
+            return None
+        if isinstance(arguments, Mapping):
+            return {key: self._text(value) for key, value in arguments.items()}
+        return tuple(self._text(value) for value in arguments)
+
+    def _text(self, value: object) -> object:
+        """
+        Return `value`, unless its `str` raises or shows a secret.
+
+        Then its shown text or its redacted `str` takes its place, so the
+        other arguments keep their types and a bad format fails as before.
+        """
+        try:
+            text = str(value)
+        except Exception:  # noqa: BLE001  # The filter must never raise.
+            return self._shown(value)
+        return self._redactor.text(text) if self._redactor.holds_secret(text) else value
+
     def _shown(self, value: object) -> str:
         """Return `value`'s redacted `repr`, or its type's name if that fails."""
         try:
@@ -297,6 +325,14 @@ class TelemetryLogFilter(logging.Filter):
             text = logging.Formatter().formatException(record.exc_info)
         if text is not None and self._redactor.holds_secret(text):
             record.exc_text = self._redactor.text(text)
+
+
+def _formatted(record: logging.LogRecord) -> str | None:
+    """Return a record's message, or `None` if its format is broken."""
+    try:
+        return record.getMessage()
+    except Exception:  # noqa: BLE001  # A bad format is the handler's to report.
+        return None
 
 
 def _logged_error(record: logging.LogRecord) -> BaseException | None:
