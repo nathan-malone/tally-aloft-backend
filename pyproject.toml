@@ -9,6 +9,9 @@ dependencies = [
     "asyncpg>=0.32.0",
     "fastapi>=0.150.0",
     "logfire[asyncpg,fastapi,redis]>=5.2.0",
+    # Logfire brings these; they are listed because the code imports them.
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.0",
     "redis>=8.1.0",
