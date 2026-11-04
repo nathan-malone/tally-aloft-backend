@@ -330,6 +330,18 @@ class StrShowsSecret:
         return "StrShowsSecret()"
 
 
+class ReprRaisesSecret:
+    """An argument whose `str` is safe and whose repr says a secret as it fails."""
+
+    @override
+    def __str__(self) -> str:
+        return "safe"
+
+    @override
+    def __repr__(self) -> str:
+        raise ValueError(HIDDEN)
+
+
 class FormatsOnceShown:
     """A message object that can't be made text, but whose repr is a format."""
 
@@ -354,9 +366,14 @@ NOT_ENOUGH = "TypeError: not enough arguments for format string"
         ("%(a)s %(b)s", ({"a": StrRaisesSecret()},), "KeyError: 'b'"),
         ("%d %d %d", (1, 2), NOT_ENOUGH),
         ("%(a)d %(b)d", ({"a": 1},), "KeyError: 'b'"),
+        # An argument whose repr raises is its type's name, so `%r` gets
+        # past it and the format's own error is reported.
+        ("%r %s", (ReprRaisesSecret(),), NOT_ENOUGH),
+        ("%(a)r %(b)s", ({"a": ReprRaisesSecret()},), "KeyError: 'b'"),
         # Formats once the message or the argument is shown.
         (FormatsOnceShown(), (StrShowsSecret(),), None),
         ("%s %s", (StrRaisesSecret(), "x"), None),
+        ("%r", (ReprRaisesSecret(),), None),
     ],
 )
 def test_the_filter_hides_the_arguments_of_a_record_whose_format_is_broken(

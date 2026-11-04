@@ -257,8 +257,9 @@ class TelemetryLogFilter(logging.Filter):
             message = _formatted(record)
         if message is None:
             # The handler formats again, and prints what an argument's `str`
-            # raises, so such an argument becomes its shown text. The record
-            # may then format, so its text is checked like any other.
+            # or repr raises, so such an argument becomes its shown text or
+            # its type's name. The record may then format, so its text is
+            # checked like any other.
             record.args = self._text_arguments(record.args)
             message = _formatted(record)
         if message is None:
@@ -301,16 +302,24 @@ class TelemetryLogFilter(logging.Filter):
 
     def _text(self, value: object) -> object:
         """
-        Return `value`, unless its `str` raises or shows a secret.
+        Return `value`, unless its `str` or repr raises, or its `str` shows a secret.
 
-        Then its shown text or its redacted `str` takes its place, so the
-        other arguments keep their types and a bad format fails as before.
+        Then its shown text, its type's name or its redacted `str` takes its
+        place, so the other arguments keep their types and a bad format fails
+        as before. The type's name stands in for a repr that raises, because
+        `%r` would print what it raised.
         """
         try:
             text = str(value)
         except Exception:  # noqa: BLE001  # The filter must never raise.
             return self._shown(value)
-        return self._redactor.text(text) if self._redactor.holds_secret(text) else value
+        if self._redactor.holds_secret(text):
+            return self._redactor.text(text)
+        try:
+            _ = repr(value)
+        except Exception:  # noqa: BLE001  # The filter must never raise.
+            return qualified_name(value)
+        return value
 
     def _shown(self, value: object) -> str:
         """Return `value`'s redacted `repr`, or its type's name if that fails."""
