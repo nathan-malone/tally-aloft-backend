@@ -10,18 +10,23 @@ broker's own connection pool. This module runs inside the release image, with
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
-from typing import Annotated
+from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
-from taskiq import Context, TaskiqDepends
 from taskiq_redis import RedisStreamBroker
 
-from tally_aloft.adapters.inbound.jobs.dependencies import UseCasesDep  # noqa: TC001  # Taskiq reads task annotations at run time.
+from tally_aloft.adapters.inbound.jobs.dependencies import (  # noqa: TC001  # Taskiq reads task annotations at run time.
+    ContextDep,
+    UseCasesDep,
+)
 from tally_aloft.adapters.inbound.jobs.idempotency_cleanup import CLEANUP_TASK
 from tally_aloft.adapters.inbound.jobs.sweeper import SWEEP_TASK
 from tally_aloft.adapters.inbound.jobs.tasks import TaskDefinition
 from tally_aloft.application.registry import UseCases  # noqa: TC001  # Taskiq reads task annotations at run time.
 from tests.support.jobs import TEST_JOB_TASKS
+
+if TYPE_CHECKING:
+    from taskiq import Context
 
 RECORD = "probe.record"
 SLEEP = "probe.sleep"
@@ -31,8 +36,6 @@ PROBE_TIMEOUT = timedelta(seconds=8)
 
 # The `UseCases` each `probe.use_cases` run received, for in-process tests.
 received_use_cases: list[UseCases] = []
-
-ContextDep = Annotated[Context, TaskiqDepends()]
 
 
 def runs_key(key: str) -> str:

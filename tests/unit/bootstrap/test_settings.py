@@ -11,6 +11,7 @@ from tally_aloft.adapters.inbound.http.version_policy import (
     ClientVersion,
 )
 from tally_aloft.bootstrap.settings import (
+    FORBIDDEN_VARIABLES,
     Environment,
     MigrationSettings,
     Settings,
@@ -31,9 +32,11 @@ VALKEY_URL = "rediss://:cache-password@cache.example:6379/0"
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear every `TALLY_` variable, then set valid database and Valkey URLs."""
+    """Clear the `TALLY_` and forbidden variables, then set valid URLs."""
     for name in [name for name in os.environ if name.startswith("TALLY_")]:
         monkeypatch.delenv(name)
+    for name in FORBIDDEN_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("TALLY_DATABASE_URL", DATABASE_URL)
     monkeypatch.setenv("TALLY_VALKEY_URL", VALKEY_URL)
 
@@ -373,6 +376,68 @@ def test_reads_the_broker_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert settings.broker_idle_timeout == 60
     assert settings.broker_stream_maxlen == 1000
+
+
+def test_has_no_logfire_token_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+
+    assert Settings().logfire_token is None
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_an_empty_logfire_token_is_none(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_LOGFIRE_TOKEN", value)
+
+    assert Settings().logfire_token is None
+
+
+def test_reads_the_logfire_token_as_a_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv("TALLY_LOGFIRE_TOKEN", "token-marker")
+
+    settings = Settings()
+
+    assert settings.logfire_token is not None
+    assert settings.logfire_token.get_secret_value() == "token-marker"
+    assert "token-marker" not in repr(settings)
+
+
+def test_load_settings_never_echoes_the_logfire_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TALLY_DATABASE_URL")
+    monkeypatch.setenv("TALLY_LOGFIRE_TOKEN", "token-marker")
+
+    with pytest.raises(SystemExit) as error:
+        load_settings()
+
+    assert "token-marker" not in _exit_message(error)
+
+
+@pytest.mark.parametrize("variable", FORBIDDEN_VARIABLES)
+def test_load_settings_refuses_a_variable_that_bypasses_scrubbing(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv(variable, "https://collector.example/marker-value")
+
+    with pytest.raises(SystemExit) as error:
+        load_settings()
+
+    assert _exit_message(error) == f"Invalid settings: {variable} (forbidden)"
+
+
+@pytest.mark.parametrize("variable", FORBIDDEN_VARIABLES)
+def test_load_settings_allows_an_empty_forbidden_variable(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv("TALLY_ENVIRONMENT", "development")
+    monkeypatch.setenv(variable, "")
+
+    assert load_settings().environment is Environment.DEVELOPMENT
 
 
 def test_sweep_settings_have_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

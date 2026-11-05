@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from tally_aloft.adapters.outbound.postgres.engine import build_engine
 from tally_aloft.adapters.outbound.redis.client import build_client
 from tally_aloft.bootstrap.broker import build_broker
+from tally_aloft.bootstrap.observability import instrument_cache_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -34,7 +35,8 @@ async def open_resources(
     Open the shared resources, and close them, last first, on exit.
 
     This is the one place that opens them, for the API's lifespan and the
-    worker's startup alike. They close even when the body raises.
+    worker's startup alike. They close even when the body raises. The cache's
+    client is traced; the broker's isn't.
 
     The API passes no `broker`, so one is built here and closed on exit. It
     never connects at startup: workers and the scheduler create the consumer
@@ -51,6 +53,7 @@ async def open_resources(
         )
         _ = stack.push_async_callback(engine.dispose)
         cache_client = build_client(settings.valkey_url.get_secret_value())
+        instrument_cache_client(cache_client)
         _ = stack.push_async_callback(cache_client.aclose)
         if broker is None:
             broker = build_broker(settings)

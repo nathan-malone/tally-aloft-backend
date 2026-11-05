@@ -13,6 +13,11 @@ from tests.support.postgres import (
     truncate_tables,
 )
 from tests.support.tables import create_test_tables
+from tests.support.telemetry import (
+    Telemetry,
+    configured_telemetry,
+    isolated_observability,
+)
 from tests.support.valkey import ValkeyServer, flush, running_valkey
 
 if TYPE_CHECKING:
@@ -83,3 +88,16 @@ async def valkey(valkey_url: str) -> AsyncGenerator[Redis]:
     client = build_client(valkey_url)
     yield client
     await client.aclose()
+
+
+@pytest.fixture
+def isolated_telemetry() -> Iterator[None]:
+    """Let the test configure telemetry and logging; restore both after it."""
+    with isolated_observability():
+        yield
+
+
+@pytest.fixture
+def telemetry(isolated_telemetry: None) -> Telemetry:  # noqa: ARG001  # Ordering only.
+    """Telemetry exported to memory, through the production scrubbing."""
+    return configured_telemetry()

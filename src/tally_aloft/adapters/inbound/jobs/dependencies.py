@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from taskiq import TaskiqDepends, TaskiqState
+from taskiq import Context, TaskiqDepends, TaskiqState
 
 from tally_aloft.application.registry import UseCases
 
@@ -17,3 +17,6 @@ def get_use_cases(state: TaskiqState = TaskiqDepends()) -> UseCases:  # noqa: B0
 # How every task reaches the use cases. Taskiq reads task annotations at run
 # time, so modules that use it import `UseCases` outside TYPE_CHECKING.
 UseCasesDep = Annotated[UseCases, TaskiqDepends(get_use_cases)]
+
+# The message being run, whose labels carry the dispatcher's trace context.
+ContextDep = Annotated[Context, TaskiqDepends()]

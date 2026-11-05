@@ -3,8 +3,12 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from tally_aloft.adapters.inbound.jobs.dependencies import UseCasesDep  # noqa: TC001  # Taskiq reads task annotations at run time.
+from tally_aloft.adapters.inbound.jobs.dependencies import (  # noqa: TC001  # Taskiq reads task annotations at run time.
+    ContextDep,
+    UseCasesDep,
+)
 from tally_aloft.adapters.inbound.jobs.run_job import run_job
+from tally_aloft.adapters.inbound.jobs.tracing import task_span
 from tally_aloft.application.shared.jobs.kinds import JobId
 
 if TYPE_CHECKING:
@@ -64,11 +68,13 @@ def job_task[P, R](
 
     `body` picks the kind's body, a use case, from `UseCases`. The wrapper
     enforces the kind's time limit around the body; Taskiq's timeout, the
-    time limit plus `backstop`, only stops a wrapper that hangs.
+    time limit plus `backstop`, only stops a wrapper that hangs. Each run has
+    a span named after the kind, continuing the dispatcher's trace.
     """
 
-    async def run(job_id: str, use_cases: UseCasesDep) -> None:
-        await run_job(use_cases, kind, body(use_cases), JobId(UUID(job_id)))
+    async def run(job_id: str, use_cases: UseCasesDep, context: ContextDep) -> None:
+        with task_span(kind.name, context.message.labels, {"job.id": job_id}):
+            await run_job(use_cases, kind, body(use_cases), JobId(UUID(job_id)))
 
     return TaskDefinition(
         name=kind.name,
@@ -76,3 +82,24 @@ def job_task[P, R](
         timeout=kind.time_limit + backstop,
         kind_name=kind.name,
     )
+
+
+def scheduled_task(
+    name: str,
+    call: Callable[[UseCases], Awaitable[object]],
+    *,
+    timeout: timedelta,
+    every: timedelta,
+) -> TaskDefinition:
+    """
+    Return the task named `name` that runs `call` on the use cases every `every`.
+
+    Each run has a span named after the task, so whatever it dispatches, such
+    as the sweeper's jobs, continues its trace.
+    """
+
+    async def run(use_cases: UseCasesDep, context: ContextDep) -> None:
+        with task_span(name, context.message.labels):
+            _ = await call(use_cases)
+
+    return TaskDefinition(name=name, function=run, timeout=timeout, every=every)

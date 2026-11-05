@@ -153,7 +153,7 @@ A failed check stops the workflow before anything is published. Fix it on `main`
 
 ## Settings
 
-The processes read environment variables only, all prefixed `TALLY_`, and ignore unknown ones. Durations are integer seconds, lists are comma-separated, and maps are JSON. A missing or invalid variable stops the process before it serves, with one line that names the variable and its error type.
+The processes read environment variables only, all prefixed `TALLY_`, and ignore unknown ones. Durations are integer seconds, lists are comma-separated, and maps are JSON. A missing or invalid variable stops the process before it serves, with one line that names the variable and its error type. So does a set, non-empty `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` or `LOGFIRE_PYDANTIC_PLUGIN_RECORD`, named as `(forbidden)`: each of the first three would make Logfire export spans or logs around the scrubbing, and the last would record validation inputs. Unset them in the shell that runs the processes, even for a local collector.
 
 | Variable | Format | Default | Required |
 | --- | --- | --- | --- |
@@ -170,6 +170,7 @@ The processes read environment variables only, all prefixed `TALLY_`, and ignore
 | `TALLY_BROKER_STREAM_MAXLEN` | The approximate number of messages the broker's stream is trimmed to, at least 1. A trimmed message's job is recovered from its row. | `100000` | no |
 | `TALLY_JOB_STALE_AFTER` | Seconds after a job's last dispatch that the sweeper dispatches it again, at least 1: a `queued` job no worker took, or a `running` one whose lease has expired. A failed attempt's retry waits for it too. | `300` | no |
 | `TALLY_SWEEP_BATCH_SIZE` | The most jobs each step of the sweeper handles in one run, at least 1. | `500` | no |
+| `TALLY_LOGFIRE_TOKEN` | The Logfire write token. Unset or empty, the processes send nothing to Logfire, even with `LOGFIRE_TOKEN` or a Logfire credentials file present. Secret. | none | no |
 | `TALLY_MIGRATION_DATABASE_URL` | The owner role's database, in `TALLY_DATABASE_URL`'s format and with its `ssl` and `host` rules, for migrations only. Secret. | none | for migrations |
 | `TALLY_MIGRATION_LOCK_TIMEOUT` | Seconds a migration waits for a lock before it fails, at least 1. | `5` | no |
 
