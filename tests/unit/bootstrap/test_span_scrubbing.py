@@ -29,12 +29,15 @@ def span(
     events: tuple[Event, ...] = (),
     status: Status | None = None,
     name: str = "span",
+    resource: Resource | None = None,
 ) -> ReadableSpan:
     return ReadableSpan(
         name=name,
         context=CONTEXT,
         parent=SpanContext(trace_id=1, span_id=3, is_remote=True),
-        resource=Resource.create({"service.name": "test"}),
+        resource=Resource.create({"service.name": "test"})
+        if resource is None
+        else resource,
         attributes=attributes,
         events=events,
         links=[Link(CONTEXT, {"link": "attribute"})],
@@ -150,6 +153,20 @@ def test_redacts_secrets_everywhere() -> None:
     assert HIDDEN not in span_text(scrubbed)
     assert REDACTED in scrubbed.name
     assert attributes_of(scrubbed)["key"] == f"x{REDACTED}y"
+
+
+def test_redacts_secrets_in_the_resource_and_keeps_its_schema_url() -> None:
+    resource = Resource(
+        {"service.name": "test", "note": f"x{HIDDEN}y", "args": ("run", HIDDEN)},
+        "https://opentelemetry.io/schemas/1.0.0",
+    )
+
+    scrubbed = scrub_span(span(resource=resource), Redactor(frozenset({HIDDEN})))
+
+    assert scrubbed.resource == Resource(
+        {"service.name": "test", "note": f"x{REDACTED}y", "args": ("run", REDACTED)},
+        "https://opentelemetry.io/schemas/1.0.0",
+    )
 
 
 def test_an_untouched_span_round_trips() -> None:

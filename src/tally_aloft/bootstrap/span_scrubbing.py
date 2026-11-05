@@ -12,6 +12,7 @@ import json
 import re
 from typing import TYPE_CHECKING, override
 
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Event, ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Link, Status
@@ -115,17 +116,23 @@ def scrub_span(span: ReadableSpan, redactor: Redactor) -> ReadableSpan:
     """
     Return a copy of `span` that keeps only what Logfire may receive.
 
-    The name, context, parent, resource, kind, times, scope and link contexts
-    are carried over unchanged; the attributes, events, link attributes and
-    status are rebuilt by the rules in this module, with `redactor` hiding
+    The context, parent, kind, times, scope, link contexts and the resource's
+    schema URL are carried over unchanged. The name, the link attributes and
+    the resource's attributes only lose their secrets. The attributes, events
+    and status are rebuilt by the rules in this module, with `redactor` hiding
     the secrets.
     """
     attributes = _scrub_request(_scrub_validation_data(_as_dict(span.attributes)))
+    resource = span.resource
     return ReadableSpan(
         name=redactor.text(span.name),
         context=span.context,
         parent=span.parent,
-        resource=span.resource,
+        # The OTLP encoder groups spans by resource, which compares by value,
+        # so spans from one process still share one group.
+        resource=Resource(
+            _redact_attributes(redactor, resource.attributes), resource.schema_url
+        ),
         attributes=_redact_attributes(redactor, attributes),
         events=[
             Event(
@@ -231,5 +238,5 @@ def _redact_attributes(
 
 
 def _as_dict(attributes: Attributes) -> dict[str, AttributeValue]:
-    """Return a span's, event's or link's attributes as a new dict."""
+    """Return a span's, event's, link's or resource's attributes as a new dict."""
     return {} if attributes is None else dict(attributes)
